@@ -17,7 +17,7 @@ class Index extends BaseController
     {
         return 'hello,' . $name;
     }
-
+    //判断用户登录
     public function checkLogin()
     {
         $userId = Request::param('userId');
@@ -54,6 +54,7 @@ class Index extends BaseController
     }
 
 
+    //注册用户
     public function register()
     {
         $username = Request::param('username');
@@ -91,6 +92,7 @@ class Index extends BaseController
         }
     }
 
+    //上传卷烟参数
     public function uploadTobacco()
     {
         DB::table('tobacco_quantity_temp')->where("1=1")->delete();
@@ -135,7 +137,7 @@ class Index extends BaseController
         }
     }
 
-
+    //下载卷烟参数
     public function dowloadTobacco()
     {
         $tempList = Db::table('tobacco_quantity_temp')->select();
@@ -157,7 +159,7 @@ class Index extends BaseController
             return json(['data' => $data, 'code' => 200]);
         }
     }
-
+    //上传客户参数
     public function uploadCust()
     {
         DB::table('cust_temp')->where("1=1")->delete();
@@ -202,7 +204,7 @@ class Index extends BaseController
         }
     }
 
-
+     //下载客户参数
     public function dowloadCust()
     {
         $tempList = Db::table('cust_temp')->select();
@@ -223,11 +225,220 @@ class Index extends BaseController
             return json(['data' => $data, 'code' => 200]);
         }
     }
-    public function download()
+    
+    //机构树
+    public function tree()
     {
-        header('Content-Type: application/octet-stream');
-        header('Content-Disposition: attachment; filename="template.xlsx"');
-        // 这里假设模板文件为 template.xlsx，可以根据实际情况修改
-        readfile('template.xlsx');
+        $institutions = Db::table('inst')->select();
+        // 构建机构树的函数
+        function buildInstitutionTree($institutions) {
+            $tree = [];
+            foreach ($institutions as $institution) {
+                if ($institution["up_inst_code"] == "") {
+                    // 找到根节点，添加到树中并递归构建子节点
+                    $tree[] = [
+                        "label" => $institution["inst_name"],
+                        "value" => $institution["inst_code"],
+                        "children" => buildSubInstitutions($institutions, $institution["inst_code"])
+                    ];
+                }
+            }
+            return $tree;
+        }
+        // 构建下属机构的函数
+        function buildSubInstitutions($institutions, $parentCode) {
+            $subInstitutions = [];
+            foreach ($institutions as $institution) {
+                if ($institution["up_inst_code"] == $parentCode) {
+                    $subInstitutions[] = [
+                        "label" => $institution["inst_name"],
+                        "value" => $institution["inst_code"],
+                        "children" => buildSubInstitutions($institutions, $institution["inst_code"])
+                    ];
+                }
+            }
+            return $subInstitutions;
+        }
+        // 构建机构树
+        $institutionTree = buildInstitutionTree($institutions);
+        return json(['data' => $institutionTree, 'code' => 200]);
+    }
+
+    //查询库存记录
+    public function searchCk()
+    {
+        $instCode = Request::param('instCode');
+        $materialName = Request::param('materialName');
+        $searchList = Db::table('materialinfo')->where('inst_code', $instCode)->where('material_name', 'like', '%' . $materialName . '%')->select();
+        if ($searchList == null || count($searchList) === 0) {
+            $data['message'] = 'success';
+            return json(['data' => [], 'code' => 200]);
+        } else {
+            $data['message'] = 'success';
+            return json(['data' => $searchList, 'code' => 200]);
+        }
+    }
+
+    //市场部数组
+    public function treeSc()
+    {
+        $searchList = Db::table('inst')->whereRaw('LENGTH(inst_code) = 7')->order('inst_code')->select();
+        if ($searchList == null || count($searchList) === 0) {
+            $data['message'] = 'success';
+            return json(['data' => [], 'code' => 200]);
+        } else {
+            $data['message'] = 'success';
+            return json(['data' => $searchList, 'code' => 200]);
+        }
+    }
+
+    //导入库存
+    public function importKc()
+    {
+            $data = Request::param('data');
+            $userId = Request::param('userId');
+            foreach ($data as $item) {
+                // 提取每条数据的id和name用于判断是否存在
+                $material_code = $item['物料编码'];
+                $material_type = $item['物料类型'];
+                $material_name = $item['物料名称'];
+                $material_unit = $item['物料单位'];
+                $material_specification = $item['物料规格'];
+                $procurement_time = $item['采购年份'];
+                $consumable = $item['是否易耗品'];
+                $inventory_quantity = $item['库存数量'];
+                $available_quantity = $item['可用数量'];
+                $material_price = $item['物料价格'];
+                $cost_type = $item['费用类型'];
+                $procurement_method = $item['采购方式'];
+                $project_name = $item['采购项目名称'];
+                $supplier_name = $item['供应商名称'];
+                $epoch = strtotime('1900-01-01');
+                $warranty_period = date('Y-m-d', $epoch + ($item['质保到期时间'] - 1) * 86400); // -2 是因为 Excel 的日期系统错误（1900年是闰年）
+                $creater_code = $userId;
+                $delay_time = date('Y-m-d', $epoch + ($item['延期时间'] - 1) * 86400); 
+                $creation_time =  date('Y-m-d');
+                $searchList = Db::table('materialinfo')->where('inst_code','100001')->where('material_code',$material_code)->find();
+                //更新
+                if ($searchList == null || count($searchList) === 0) {
+                    // 插入
+                    // $searchName = Db::table('materialinfo')->where('inst_code','100001')->where('material_code',$material_code)->find();
+                    try {
+                         Db::table('materialinfo')->insert([
+                             'material_code' => $material_code,
+                             'material_type' => $material_type,
+                             'material_name' => $material_name,
+                             'material_unit' => $material_unit,
+                             'material_specification' => $material_specification,
+                             'procurement_time' =>  $procurement_time,
+                             'consumable' => $consumable,
+                             'inst_code' => '100001',
+                             'inventory_quantity' => $inventory_quantity,
+                             'available_quantity' => $available_quantity,
+                             'material_price' => $material_price,
+                             'cost_type' => $cost_type,
+                             'procurement_method' => $procurement_method,
+                             'project_name' => $project_name,
+                             'supplier_name' => $supplier_name,
+                             'creation_time'=> $creation_time,
+                             'creater_code'=> $creater_code,
+                             'warranty_period'=> $warranty_period,
+                             'delay_time'=> $delay_time
+                         ]); 
+                     } catch (Exception $e) {
+                         return json(['data' => ['message' => '数据库插入失败'], 'code' => 300]);
+                     }
+                     try {
+                         Db::table('materialinfo_record')->insert([
+                             'material_code' => $material_code,
+                             'material_name' => $material_name,
+                             'quantity' => 0,
+                             'inventory_quantity' => $inventory_quantity,
+                             'inst_code' => '100001',
+                             'allocate_time' => date('Y-m-d H:i:s'), // 使用当前时间
+                             'allocate_person' => $userId, // 使用当前时间
+                         ]);
+                     } catch (Exception $e) {
+                         return json(['data' => ['message' => '数据库分配记录插入失败'], 'code' => 300]);
+                     }
+                     return json(['data' => ['message' => '库存分配成功'], 'code' => 200]);
+                } else {
+                    return json(['data' => ['message' => "已有物料数据，编号为: " . $searchList['material_code']], 'code' => 300]);
+                }
+            }
+    }
+    //库存分配
+    public function alloateKc()
+    {
+        $data = Request::param('data');
+        $userId = Request::param('userId');
+        foreach ($data as $item) {
+            // 提取每条数据的id和name用于判断是否存在
+            $material_code = $item['物料编码'];
+            $material_type = $item['物料类型'];
+            $material_name = $item['物料名称'];
+            $material_unit = $item['物料单位'];
+            $material_specification = $item['物料规格'];
+            $procurement_time = $item['采购年份'];
+            $consumable = $item['是否易耗品'];
+            $inventory_quantity = $item['库存数量'];
+            $available_quantity = $item['可用数量'];
+            $material_price = $item['物料价格'];
+            $cost_type = $item['费用类型'];
+            $procurement_method = $item['采购方式'];
+            $project_name = $item['采购项目名称'];
+            $supplier_name = $item['供应商名称'];
+            $epoch = strtotime('1900-01-01');
+            $warranty_period = date('Y-m-d', $epoch + ($item['质保到期时间'] - 1) * 86400); // -2 是因为 Excel 的日期系统错误（1900年是闰年）
+            $creater_code = $userId;
+            $delay_time = date('Y-m-d', $epoch + ($item['延期时间'] - 1) * 86400); 
+            $creation_time =  date('Y-m-d');
+            $searchList = Db::table('materialinfo')->where('inst_code','100001')->where('material_code',$material_code)->find();
+            //更新
+            if ($searchList == null || count($searchList) === 0) {
+                // 插入
+                // $searchName = Db::table('materialinfo')->where('inst_code','100001')->where('material_code',$material_code)->find();
+                try {
+                     Db::table('materialinfo')->insert([
+                         'material_code' => $material_code,
+                         'material_type' => $material_type,
+                         'material_name' => $material_name,
+                         'material_unit' => $material_unit,
+                         'material_specification' => $material_specification,
+                         'procurement_time' =>  $procurement_time,
+                         'consumable' => $consumable,
+                         'inst_code' => '100001',
+                         'inventory_quantity' => $inventory_quantity,
+                         'available_quantity' => $available_quantity,
+                         'material_price' => $material_price,
+                         'cost_type' => $cost_type,
+                         'procurement_method' => $procurement_method,
+                         'project_name' => $project_name,
+                         'supplier_name' => $supplier_name,
+                         'creation_time'=> $creation_time,
+                         'creater_code'=> $creater_code,
+                         'warranty_period'=> $warranty_period,
+                         'delay_time'=> $delay_time
+                     ]); 
+                 } catch (Exception $e) {
+                     return json(['data' => ['message' => '数据库插入失败'], 'code' => 300]);
+                 }
+                 try {
+                     Db::table('materialinfo_record')->insert([
+                         'material_code' => $material_code,
+                         'quantity' => 0,
+                         'inventory_quantity' => $inventory_quantity,
+                         'inst_code' => '100001',
+                         'allocate_time' => date('Y-m-d H:i:s'), // 使用当前时间
+                         'allocate_person' => $userId, // 使用当前时间
+                     ]);
+                 } catch (Exception $e) {
+                     return json(['data' => ['message' => '数据库分配记录插入失败'], 'code' => 300]);
+                 }
+                 return json(['data' => ['message' => '库存分配成功'], 'code' => 200]);
+            } else {
+                return json(['data' => ['message' => "已有物料数据，编号为: " . $searchList['material_code']], 'code' => 300]);
+            }
+        }
     }
 }
