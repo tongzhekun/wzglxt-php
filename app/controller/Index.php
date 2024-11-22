@@ -52,7 +52,42 @@ class Index extends BaseController
             }
         }
     }
-
+    //判断用户密码
+    public function editPassWord()
+    {
+        $fields = Request::param('elForm');
+        $userId = Request::param('userId');
+        $password=$fields['fields'][0]['fieldValue'];
+        $newpassword=$fields['fields'][1]['fieldValue'];
+        $user = Db::table('user')->where('user_id', $userId)->find();
+        $passwordBack=$user['password'];
+        $statusBack=$user['status'];
+        if($statusBack==='2'){
+            $data=[];
+            $data['message'] = '用户被禁用，请联系管理员';
+            return json(['data' => $data, 'code' =>300]);
+        }else{
+            if (password_verify($password, $passwordBack)) {
+                $hashedPassword = password_hash($newpassword, PASSWORD_DEFAULT);
+                Db::table('user')
+                ->where('user_id',$userId)
+                ->update([
+                    'password' => $hashedPassword
+                ]);
+                $sys_record_data = [
+                    'user_id' =>  $userId,
+                    'type' => '密码修改',
+                    'time' => date('Y-m-d H:i:s')
+                ];
+                Db::table('sysrecord')->insert($sys_record_data);
+                return json(['data' =>[], 'message' => '密码修改成功', 'code' =>200]);
+            } else {
+                return json(['data' => [], 'code' => 300, 'message' => '旧密码错误，请重新输入']);
+            }
+        }
+        return json(['data' =>[], 'code' =>300]);
+    }
+    
 
     //注册用户
     public function register()
@@ -710,6 +745,95 @@ class Index extends BaseController
         ->select();
         if ($searchList == null || count($searchList) === 0) {
             return json(['data' => [],'total' => 0, 'code' => 200]);
+        } else {
+            return json(['data' => $searchList, 'code' => 200]);
+        }
+    }
+    //重置密码
+    public function resetPassWord()
+    {
+        $userId = Request::param('userId');
+        $newpassword='123456';
+        $hashedPassword = password_hash($newpassword, PASSWORD_DEFAULT);
+        $result=Db::table('user')->where('user_id',$userId)->select();
+        if ($result == null || count($result) === 0) {
+            return json(['message' => '当前用户未注册，请先注册', 'code' => 300]);
+        } else {
+            Db::table('user')
+            ->where('user_id',$userId)
+            ->update([
+                'password' => $hashedPassword
+            ]);
+            $sys_record_data = [
+                'user_id' =>  $userId,
+                'type' => '密码重置'.$userId,
+                'time' => date('Y-m-d H:i:s')
+            ];
+            Db::table('sysrecord')->insert($sys_record_data);
+            return json(['message' => '密码重置成功', 'code' => 200]);
+        }
+    }
+    //查询所有用户
+    public function searchUser()
+    { 
+        $userId = Request::param('userId'); 
+        $instCode = Request::param('instCode'); 
+        $roleId = Request::param('roleId'); 
+        $userName = Request::param('userName'); 
+        $page = Request::param('page', 1); 
+        $pageSize = Request::param('pageSize', 10);
+        $searchList=Db::table('employee');
+        $searchList1=Db::table('employee');
+        if (!empty($userId)) { 
+            $searchList = $searchList->where('employee_code', $userId);
+            $searchList1 = $searchList1->where('employee_code', $userId); 
+        }
+        if (!empty($userName)) { 
+        
+            $searchList = $searchList->where('employee_name', 'like', '%' . $userName . '%');
+            $searchList1 = $searchList1->where('employee_name', 'like', '%' . $userName . '%'); 
+        }
+        if (!empty($instCode)) { 
+            $searchList = $searchList->where('inst_code', $instCode);
+            $searchList1 = $searchList1->where('inst_code', $instCode); 
+        }
+        if (!empty($roleId)) { 
+            $searchList2 = Db::table('user_role')->where('role_id', $roleId)->select();
+            $searchList2Array = $searchList2->toArray();
+            $userIds = array_column($searchList2Array, 'user_id');
+            $searchList = $searchList->where('employee_code', 'in', $userIds);
+            $searchList1 = $searchList1->where('employee_code', 'in', $userIds);
+        }
+        $searchList=$searchList->order('status')->page($page, $pageSize)->select();
+        $total = $searchList1->count();
+        if ($searchList == null || count($searchList) === 0) {
+            return json(['data' => [],'total' => 0, 'code' => 200]);
+        } else {
+            return json(['data' => $searchList,'total' => $total, 'code' => 200]);
+        }
+    }
+    //查询所有角色
+    public function searchRole()
+    {
+        $searchList=Db::table('role')->select();
+        if ($searchList == null || count($searchList) === 0) {
+            return json(['data' => [], 'code' => 200]);
+        } else {
+            return json(['data' => $searchList, 'code' => 200]);
+        }
+    }
+    //查询用户基本信息
+    public function userMessage()
+    {
+        $userId = Request::param('userId');
+        $searchList=Db::table('employee')->where('employee_code',  $userId);
+        $searchList =  $searchList
+        ->leftJoin('user_role', 'employee.employee_code = user_role.user_id')
+        ->leftJoin('role', 'role.role_id = user_role.role_id')
+        ->field(['employee.*', 'role.role_name'])
+        ->select();
+        if ($searchList == null || count($searchList) === 0) {
+            return json(['data' => [], 'code' => 200]);
         } else {
             return json(['data' => $searchList, 'code' => 200]);
         }
