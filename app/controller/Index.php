@@ -263,9 +263,60 @@ class Index extends BaseController
         $institutionTree = buildInstitutionTree($institutions);
         return json(['data' => $institutionTree, 'code' => 200]);
     }
-
+    //查询用户角色
+    public function userRole()
+    {
+        $userId = Request::param('userId');
+        $searchList = Db::table('user_role')
+        ->where('user_id', $userId)
+        ->select();
+        if ($searchList == null || count($searchList) === 0) {
+            return json(['data' => [],'total' => 0, 'code' => 200]);
+        } else {
+            return json(['data' => $searchList, 'code' => 200]);
+        }
+    }
     //查询现有库存记录
     public function searchCk()
+    {
+        $instCode = Request::param('instCode');
+        $materialName = Request::param('materialName');
+        $page = Request::param('page', 1); 
+        $pageSize = Request::param('pageSize', 10);
+        $searchList = Db::table('materialinfo')
+        ->where('inst_code', $instCode)
+        ->where('history_type', '0')
+        ->where('material_name', 'like', '%' . $materialName . '%')
+        ->page($page, $pageSize)->select();
+        $total =  Db::table('materialinfo')->where('inst_code', $instCode)
+        ->where('history_type', '0')->where('material_name', 'like', '%' . $materialName . '%')
+        ->count();
+        if ($searchList == null || count($searchList) === 0) {
+            $data['message'] = 'success';
+            return json(['data' => [],'total' => 0, 'code' => 200]);
+        } else {
+            $data['message'] = 'success';
+            return json(['data' => $searchList,'total' => $total, 'code' => 200]);
+        }
+    }
+    //删除现有库存记录
+    public function deleteCk()
+    {
+        $instCode = Request::param('instCode');
+        $materialCode = Request::param('materialCode');
+        try {
+            DB::table('materialinfo')
+            ->where('inst_code', $instCode)
+            ->where('material_code', $materialCode)
+            ->delete();
+            return json(['message' =>'删除成功', 'code' => 200]);
+        } catch (Exception $e) {
+            // 记录插入错误
+            return json(['data' => ['message' => "删除失败"], 'code' => 300]);
+        }
+    }
+    //导出现有库存记录
+    public function exportCk()
     {
         $instCode = Request::param('instCode');
         $materialName = Request::param('materialName');
@@ -278,7 +329,6 @@ class Index extends BaseController
             return json(['data' => $searchList, 'code' => 200]);
         }
     }
-
     //市场部数组
     public function treeSc()
     {
@@ -617,7 +667,31 @@ class Index extends BaseController
     {
         $instCode = Request::param('instCode');
         $materialName = Request::param('materialName');
-        $searchList = Db::table('materialinfo')->where('inst_code', $instCode)->where('history_type', '1')->where('material_name', 'like', '%' . $materialName . '%')->select();
+        $page = Request::param('page', 1); 
+        $pageSize = Request::param('pageSize', 10);
+        $searchList = Db::table('materialinfo')->where('inst_code', $instCode)
+        ->where('history_type', '1')
+        ->where('material_name', 'like', '%' . $materialName . '%')
+        ->page($page, $pageSize)->select();
+        $total =  Db::table('materialinfo')->where('inst_code', $instCode)
+        ->where('history_type', '1')
+        ->where('material_name', 'like', '%' . $materialName . '%')
+        ->count();
+        if ($searchList == null || count($searchList) === 0) {
+            $data['message'] = 'success';
+            return json(['data' => [], 'total' => 0, 'code' => 200]);
+        } else {
+            $data['message'] = 'success';
+            return json(['data' => $searchList,'total' => $total, 'code' => 200]);
+        }
+    }
+    //导出历史库存记录
+    public function exportHistoryCk()
+    {
+        $instCode = Request::param('instCode');
+        $materialName = Request::param('materialName');
+        $searchList = Db::table('materialinfo')->where('inst_code', $instCode)
+        ->where('history_type', '1')->where('material_name', 'like', '%' . $materialName . '%')->select();
         if ($searchList == null || count($searchList) === 0) {
             $data['message'] = 'success';
             return json(['data' => [], 'code' => 200]);
@@ -627,7 +701,41 @@ class Index extends BaseController
         }
     }
     //查询分配库存记录
-    public function searchAllocateCk()
+    public function searchAllocateCk()  
+    {
+        $instCode = Request::param('instCode'); 
+        $materialName = Request::param('materialName');
+        $page = Request::param('page', 1); 
+        $pageSize = Request::param('pageSize', 10); 
+        $searchList = Db::table('materialinfo_record');
+        $searchList1 = Db::table('materialinfo_record');
+        if (!empty($instCode)) { 
+            $searchList = $searchList->where('materialinfo_record.inst_code', $instCode);
+            $searchList1 = $searchList1->where('materialinfo_record.inst_code', $instCode); 
+        }
+        if (!empty($materialName)) {
+            $searchList = $searchList->where('material_name', 'like', '%' . $materialName . '%'); 
+            $searchList1 = $searchList1->where('material_name', 'like', '%' . $materialName . '%');
+        }
+        $searchList = $searchList
+        ->leftJoin('inst', 'materialinfo_record.inst_code = inst.inst_code')
+        ->where('type', '库存分配')
+        ->field(['materialinfo_record.*', 'inst.inst_name'])
+        ->page($page, $pageSize); 
+        // 分页
+        $result = $searchList->select()->toArray(); 
+        // 查询数据
+        $total =  $searchList1
+        ->where('type', '库存分配')->count(); 
+        // 总记录数
+        if (empty($result)) {
+            return json(['data' => [], 'code' => 200,'total' => 0, 'message' => 'success']);
+        } else { 
+            return json(['data' => $result, 'code' => 200,'total' => $total, 'message' => 'success']);
+        }     
+    }
+    //导出分配库存记录
+    public function exportAllocateCk()
     {
         $instCode = Request::param('instCode');
         $materialName = Request::param('materialName');
