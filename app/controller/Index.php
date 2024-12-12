@@ -753,6 +753,7 @@ class Index extends BaseController
     public function resetPassWord()
     {
         $userId = Request::param('userId');
+        $userIdOperate = Request::param('userIdOperate');
         $newpassword='123456';
         $hashedPassword = password_hash($newpassword, PASSWORD_DEFAULT);
         $result=Db::table('user')->where('user_id',$userId)->select();
@@ -765,9 +766,10 @@ class Index extends BaseController
                 'password' => $hashedPassword
             ]);
             $sys_record_data = [
-                'user_id' =>  $userId,
+                'user_id' =>  $userIdOperate,
                 'type' => '密码重置'.$userId,
-                'time' => date('Y-m-d H:i:s')
+                'time' => date('Y-m-d H:i:s'),
+                'remark' => '重置用户'.$userId.'的密码'
             ];
             Db::table('sysrecord')->insert($sys_record_data);
             return json(['message' => '密码重置成功', 'code' => 200]);
@@ -830,13 +832,66 @@ class Index extends BaseController
         $searchList =  $searchList
         ->leftJoin('user_role', 'employee.employee_code = user_role.user_id')
         ->leftJoin('role', 'role.role_id = user_role.role_id')
-        ->field(['employee.*', 'role.role_name'])
+        ->field(['employee.*', 'role.role_id', 'role.role_name', 'role.remark'])
         ->select();
         if ($searchList == null || count($searchList) === 0) {
             return json(['data' => [], 'code' => 200]);
         } else {
             return json(['data' => $searchList, 'code' => 200]);
         }
+    }
+    //提交用户信息
+    public function submitUserMessage()
+    {
+        $loanData = Request::param('loanData');
+        $telephone = Request::param('telephone');
+        $type = Request::param('type');
+        $user_name = Request::param('userName');
+        $status = Request::param('status');
+        $inst_code = Request::param('instCode');
+        $user_id = Request::param('userId');
+        $userIdOperate = Request::param('userIdOperate');
+        $instResult=Db::table('inst')
+            ->where('inst_code',$inst_code)->find();
+        $inst_name=$instResult['inst_name'];
+        try {
+            Db::table('employee')
+            ->where('employee_code',$user_id)
+            ->update([
+                'status' => $status,
+                'type' => $type,
+                'telephone' => $telephone,
+                'inst_code' => $inst_code,
+                'inst_name' => $inst_name,
+            ]);
+        } catch (Exception $e) {
+            return json(['message' =>'更新用户基础信息失败', 'code' => 300]);
+        }
+        try {
+            DB::table('user_role')
+            ->where('user_id', $user_id)
+            ->delete();
+        } catch (Exception $e) {
+            return json(['message' =>'更新用户角色信息删除失败', 'code' => 300]);
+        }
+        foreach ($loanData as $item) {
+            try {
+                Db::table('user_role')->insert([
+                    'user_id' => $user_id,
+                    'role_id' => $item['role_id']
+                ]);
+            } catch (Exception $e) {
+                return json(['message' =>'更新用户角色信息插入失败', 'code' => 300]);
+            }
+        }
+        $sys_record_data = [
+            'user_id' =>  $userIdOperate,
+            'type' => '用户信息修改',
+            'time' => date('Y-m-d H:i:s'),
+            'remark' =>'操作修改了'.$user_id.'用户信息',
+        ];
+        Db::table('sysrecord')->insert($sys_record_data);
+        return json(['message' =>'修改用户信息成功', 'code' => 200]);
     }
     //查询现有库存记录
     public function searchCk()
@@ -894,7 +949,16 @@ class Index extends BaseController
     //市场部数组
     public function treeSc()
     {
-        $searchList = Db::table('inst')->whereRaw('LENGTH(inst_code) = 7')->order('inst_code')->select();
+        $inst_code = Request::param('inst_code');
+        $searchList = Db::table('inst');
+        if (!empty($inst_code)) { 
+            if(strlen($inst_code) === 7){
+                $searchList = $searchList->where('inst_code', $inst_code); 
+            }else if(strlen($inst_code) === 6){
+                $searchList = $searchList->where('up_inst_code', $inst_code); 
+            }
+        }
+        $searchList = $searchList->whereRaw('LENGTH(inst_code) = 7')->order('inst_code')->select();
         if ($searchList == null || count($searchList) === 0) {
             $data['message'] = 'success';
             return json(['data' => [], 'code' => 200]);
@@ -1160,7 +1224,6 @@ class Index extends BaseController
         $searchList = Db::table('materialinfo')
         ->where('inst_code', '100001')
         ->where('history_type', '0')
-        ->field(['material_code', 'material_name','inventory_quantity']) // 指定需要的字段
         ->select();
         //更新
         if ($searchList == null || count($searchList) === 0) {
@@ -1319,4 +1382,938 @@ class Index extends BaseController
             return json(['data' => $result, 'code' => 200, 'message' => 'success']);
         }
     }
+
+    public function generateBusiId() {
+        list($usec, $sec) = explode(" ", microtime());
+        $date = date('YmdHis');
+        $microseconds = substr($usec, 2, 6);
+        return $date. $microseconds;
+    }
+    //提交需求预估流程
+    public function submitDemand()
+    {
+        $loanData = Request::param('loanData');
+        $user_id = Request::param('user_id');
+        $user_name = Request::param('user_name');
+        $inst_code = Request::param('inst_code');
+        $inst_name = Request::param('inst_name');
+        $telephone = Request::param('telephone');
+        $flow_no = Request::param('flow_no');
+        $flow_title = Request::param('flow_title');
+        $flow_node = Request::param('flow_node');
+        $flow_node_name = Request::param('flow_node_name');
+        $approval_name = Request::param('approval_name');
+        $approval_content = Request::param('approval_content');
+        $next_approval_id = Request::param('next_approval_id');
+        $next_approval_name = Request::param('next_approval_name');
+        $busi_id=Request::param('busi_id');
+        $time =  date('Y-m-d H:i:s');
+        Db::startTrans();
+        try {
+            //第一步没有busi_id插入，有则第一步退回后更新
+            if(empty($busi_id)){
+                $busi_id = $this->generateBusiId();
+                foreach ($loanData as $item) {
+                    $material_code = $item['material_code'];
+                    $material_name = $item['material_name'];
+                    $material_type = $item['material_type'];
+                    $consumable = $item['consumable'];
+                    $num = $item['num'];
+                    try {
+                        Db::table('demand_forecast')->insert([
+                            'busi_id' =>$busi_id,
+                            'material_code' => $material_code,
+                            'material_name' => $material_name,
+                            'material_type' => $material_type,
+                            'consumable' => $consumable,
+                            'num' =>  $num,
+                            'flow_no' => $flow_no,
+                            'flow_title' => $flow_title,
+                            'user_id' => $user_id,
+                            'user_name' => $user_name,
+                            'inst_code' => $inst_code ,
+                            'inst_name' => $inst_name ,
+                            'telephone' => $telephone,
+                            'time' =>  $time,
+                        ]); 
+                    } catch (Exception $e) {
+                        Db::rollback();
+                        return json(['message' => '数据库插入失败', 'code' => 300]);
+                    }
+                } 
+            }else{
+                //退回后再提交删除原来数据，新增新的数据
+                if($flow_node==='1'){
+                    DB::table('demand_forecast')->where("busi_id",$busi_id)->delete();
+                    foreach ($loanData as $item) {
+                        $material_code = $item['material_code'];
+                        $material_name = $item['material_name'];
+                        $material_type = $item['material_type'];
+                        $consumable = $item['consumable'];
+                        $num = $item['num'];
+                        try {
+                            Db::table('demand_forecast')->insert([
+                                'busi_id' =>$busi_id,
+                                'material_code' => $material_code,
+                                'material_name' => $material_name,
+                                'material_type' => $material_type,
+                                'consumable' => $consumable,
+                                'num' =>  $num,
+                                'flow_no' => $flow_no,
+                                'flow_title' => $flow_title,
+                                'user_id' => $user_id,
+                                'user_name' => $user_name,
+                                'inst_code' => $inst_code ,
+                                'inst_name' => $inst_name ,
+                                'telephone' => $telephone,
+                                'time' =>  $time,
+                            ]); 
+                        } catch (Exception $e) {
+                            Db::rollback();
+                            return json(['message' => '数据库插入失败', 'code' => 300]);
+                        }
+                    } 
+                }
+            }
+            try { 
+                //发起插入当前和后一节点，之后审批更新当前节点，后一节点不为-99时插入后一节点
+                $nextFlowNode= Db::table('flow') ->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->find();
+                if($flow_node==='1'){
+                    $currentFlowApproval= Db::table('flow_approval') ->where('busi_id', $busi_id)->where('flow_node',  $flow_node)->find();
+                    if ($currentFlowApproval == null || count($currentFlowApproval) === 0) {
+                        Db::table('flow_approval')->insert([
+                            'busi_id' =>$busi_id,
+                            'flow_no' => $flow_no,
+                            'flow_title' => $flow_title,
+                            'flow_node' => $flow_node,
+                            'flow_node_name' => $flow_node_name,
+                            'approval_id' => $user_id,
+                            'approval_name' => $approval_name,
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time,
+                            'show_type' => '1'
+                        ]); 
+                    } else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_node', $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_time' => $time
+                        ]); 
+                    }
+                }else{
+                    //如果当前节点不是最后一个节点
+                    if($nextFlowNode['flow_node_next'] != '-99'){
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time
+                        ]); 
+                    }else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '5',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time
+                        ]); 
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)
+                        ->update([
+                            'flow_status' => '5'
+                        ]); 
+                    }
+                }       
+                if($nextFlowNode['flow_node_next'] != '-99'){
+                    $flow_node_next = $nextFlowNode['flow_node_next'];
+                    $nextList= Db::table('flow') ->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)->find();
+                    $flow_node_name_next = $nextList['flow_node_name'];
+                    $nextResultList= Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)->select();
+                    if($nextResultList  === null || count($nextResultList) === 0){
+                    }else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)
+                        ->update([
+                            'show_type' => '0'
+                        ]); 
+                    }
+                    Db::table('flow_approval')->insert([
+                        'busi_id' =>$busi_id,
+                        'flow_no' => $flow_no,
+                        'flow_title' => $flow_title,
+                        'flow_node' => $flow_node_next,
+                        'flow_node_name' => $flow_node_name_next,
+                        'approval_id' => $next_approval_id,
+                        'approval_name' => $next_approval_name,
+                        'approve_status' => '1',
+                        'flow_status' => '1',
+                        'approval_content' => '',
+                        'show_type' => '1'
+                    ]); 
+                }
+            } catch (Exception $e) {
+                Db::rollback();
+                return json(['message' => '数据库插入失败', 'code' => 300]);
+            }
+            Db::commit();
+            if($flow_node==='1'){
+                return json(['message' => '流程已提交', 'code' => 200]);
+            }else{
+                return json(['message' => '流程已审批', 'code' => 200]);
+            }
+        } catch (Exception $e) {
+            // 回滚事务
+            Db::rollback();
+            return json(['message' => '操作失败', 'code' => 300]);
+        }
+
+        
+    }
+    //查询下一审批人
+    public function searchNextApproval()
+    {
+        $inst_code = Request::param('inst_code');
+        $flow_no = Request::param('flow_no');
+        $flow_node = Request::param('flow_node');
+        //客户经理发起本机构审批，其他节点审批人为上层机构审批
+        if($flow_node==='1'){
+            $instList = Db::table('inst')->where('inst_code', $inst_code)->find();
+            $up_inst_code =$instList['inst_code'];
+            $up_inst_name =$instList['inst_name'];
+        }else{
+            $instList = Db::table('inst')->where('inst_code', $inst_code)->find();
+            $up_inst_code =$instList['up_inst_code'];
+            $up_inst_name =$instList['up_inst_name'];
+        }
+        try {
+            $roleIdList = Db::table('flow')->where('flow_no', $flow_no)->where('flow_node_pre', $flow_node)->find();
+            $role_id=$roleIdList['role_id'];
+            $result = Db::table('employee')
+                ->where('inst_code', $up_inst_code)
+                ->join('user_role', 'employee.employee_code = user_role.user_id', 'inner')
+                ->where('user_role.role_id', '=', $role_id)
+                ->select(); 
+            return json(['data' => $result, 'code' => 200]);
+        }  catch (Exception $e) {
+            return json(['message' => '查询审批人失败', 'code' => 300]);
+        }
+    }
+    //查询待办
+    public function searchTodo()
+    {
+        $page = Request::param('page', 1); 
+        $pageSize = Request::param('pageSize', 10);
+        $user_id=Request::param('user_id');
+        $busi_id=Request::param('busi_id');
+        $approve_status=Request::param('approve_status');
+        try {
+            $resultList = Db::table('flow_approval')->page($page, $pageSize)
+            ->order('approval_time', 'DESC');
+            $total = Db::table('flow_approval');
+            if (!empty($approve_status)) {
+                $resultList = $resultList->where('approve_status','1');;
+                $total = $total->where('approve_status','1');;
+            }
+            if (!empty($busi_id)) {
+                $resultList = $resultList->where('busi_id',$busi_id);
+                $total = $total->where('busi_id',$busi_id);
+            }
+            if (!empty($user_id)) {
+                $resultList = $resultList->where('approval_id', $user_id);
+                $total = $total->where('approval_id', $user_id);
+            }
+            $resultList = $resultList->select();
+            $total =  $total->count();
+            return json(['data' => $resultList, 'total'=>$total,'code' => 200]);
+        }  catch (Exception $e) {
+            return json(['data' =>[],'message' => '查询待办失败', 'total'=>'0','code' => 300]);
+        }
+    }
+    //查询已办
+    public function searchDone()
+    {
+        $page = Request::param('page', 1); 
+        $pageSize = Request::param('pageSize', 10);
+        $user_id=Request::param('user_id');
+        $busi_id=Request::param('busi_id');
+        try {
+            $resultList = Db::table('flow_approval')
+            ->where('approval_id', $user_id)
+            ->where('approve_status','0')
+            ->order('approval_time', 'DESC');
+            if (!empty($busi_id)) {
+                $resultList = $resultList->where('busi_id',$busi_id);
+            }
+            $resultList = $resultList->select();
+            
+            // 用于存储最终处理后的数据
+            $finalResultList = [];
+            // 用于临时存储已经处理过的busi_id
+            $processedBusiIds = [];
+            foreach ($resultList as $row) {
+                $busi_id = $row['busi_id'];
+
+                if (!in_array($busi_id, $processedBusiIds)) {
+                    // 如果当前busi_id第一次出现，直接添加到最终结果列表
+                    $finalResultList[] = $row;
+                    $processedBusiIds[] = $busi_id;
+                } else {
+                    // 如果当前busi_id已经出现过，检查show_type是否为1
+                    if ($row['show_type'] == 1) {
+                        // 如果show_type为1，替换掉之前添加的该busi_id对应的记录
+                        foreach ($finalResultList as $key => $finalRow) {
+                            if ($finalRow['busi_id'] == $busi_id) {
+                                $finalResultList[$key] = $row;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            $total = count($finalResultList);
+            $page = max(1, intval($page)); // 确保页码最小为1
+            $pageSize = max(1, intval($pageSize)); // 确保每页数量最小为1
+            $startIndex = ($page - 1) * $pageSize;
+            $endIndex = min($startIndex + $pageSize, $total);
+            $resultList1 = array_slice($finalResultList, $startIndex, $pageSize);
+            return json(['data' => $resultList1, 'total'=>$total,'code' => 200]);
+        }  catch (Exception $e) {
+            return json(['data' =>[],'message' => '查询已办失败', 'total'=>'0','code' => 300]);
+        }
+    }
+    //查询需求预估
+    public function searchDemand()
+    {
+        $busi_id=Request::param('busi_id');
+        try {
+            $resultList = Db::table('demand_forecast')
+            ->where('busi_id', $busi_id)
+            ->select();
+            return json(['data' => $resultList, 'code' => 200]);
+        }  catch (Exception $e) {
+            return json(['data' =>[],'message' => '查询需求预估失败', 'code' => 300]);
+        }
+    }
+    //查询当前是不是最后一个节点
+    public function searchMaxFlowNode()
+    {
+        $flow_no=Request::param('flow_no');
+        try {
+            $resultList = Db::table('flow')
+            ->where('flow_no', $flow_no)
+            ->max('flow_node');
+            return json(['data' => $resultList, 'code' => 200]);
+        }  catch (Exception $e) {
+            return json(['data' =>[],'message' => '查询最后节点失败', 'code' => 300]);
+        }
+    }
+    
+    //取消流程
+    public function cancel()
+    {
+        $busi_id=Request::param('busi_id');
+        try {
+            Db::table('flow_approval')->where('busi_id', $busi_id)
+            ->update([
+                'approve_status' => '0',
+                'flow_status' => '4'
+            ]); 
+            return json(['message' => '取消流程成功', 'code' => 200]);
+        }  catch (Exception $e) {
+            return json(['message' => '取消流程失败', 'code' => 300]);
+        }
+    }
+    //否决流程
+    public function deny()
+    {
+        $busi_id=Request::param('busi_id');
+        $flow_node=Request::param('flow_node');
+        $time =  date('Y-m-d H:i:s');
+        $approval_content=Request::param('approval_content');
+        Db::startTrans();
+        try {
+            Db::table('flow_approval')->where('busi_id', $busi_id)
+            ->update([
+                'approve_status' => '0',
+                'flow_status' => '3'
+            ]); 
+            Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_node', $flow_node)->where('show_type',  '1')
+            ->update([
+                'approval_content' => $approval_content,
+                'approval_time' => $time
+            ]); 
+            Db::commit();
+            return json(['message' => '否决流程成功', 'code' => 200]);
+        }  catch (Exception $e) {
+            Db::rollback();
+            return json(['message' => '否决流程失败', 'code' => 300]);
+        }
+    }
+    //退回第一步流程
+    public function backfirst()
+    {
+        $busi_id=Request::param('busi_id');
+        $flow_node=Request::param('flow_node');
+        $time =  date('Y-m-d H:i:s');
+        $approval_content=Request::param('approval_content');
+        Db::startTrans();
+        try {
+            
+            Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_node', $flow_node)->where('show_type',  '1')
+            ->update([
+                'approval_content' => $approval_content,
+                'approval_time' => $time
+            ]); 
+            Db::table('flow_approval')->where('busi_id', $busi_id)
+            ->update([
+                'approve_status' => '0',
+                'flow_status' => '2',
+                'show_type' => '0'
+            ]); 
+            $resultFirst=Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_node', '1')->find();
+            Db::table('flow_approval')->insert([
+                'busi_id' =>$busi_id,
+                'flow_no' => $resultFirst['flow_no'],
+                'flow_title' => $resultFirst['flow_title'],
+                'flow_node' => $resultFirst['flow_node'],
+                'flow_node_name' => $resultFirst['flow_node_name'],
+                'approval_id' => $resultFirst['approval_id'],
+                'approval_name' => $resultFirst['approval_name'],
+                'approve_status' => '1',
+                'flow_status' => '1',
+                'approval_content' => '',
+                'show_type' => '1'
+            ]); 
+            Db::commit();
+            return json(['message' => '退回第一步成功', 'code' => 200]);
+        }  catch (Exception $e) {
+            Db::rollback();
+            return json(['message' => '退回第一步失败', 'code' => 300]);
+        }
+    }
+    //退回上一步流程
+    public function backlast()
+    {
+        $busi_id=Request::param('busi_id');
+        $flow_node=Request::param('flow_node');
+        $time =  date('Y-m-d H:i:s');
+        $approval_content=Request::param('approval_content');
+        Db::startTrans();
+        try {
+            Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_node', $flow_node)->where('show_type',  '1')
+            ->update([
+                'approve_status' => '0',
+                'flow_status' => '2',
+                'show_type' => '0',
+                'approval_content' => $approval_content,
+                'approval_time' => $time
+            ]); 
+            $flowNoList=Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_node', $flow_node)->find();
+            $flow_no=$flowNoList['flow_no'];
+            $flow_node_preList=Db::table('flow')->where('flow_no', $flow_no)->where('flow_node', $flow_node)->find();
+            $flow_node_pre=$flow_node_preList['flow_node_pre'];
+            Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_node', $flow_node_pre)
+            ->update([
+                'approve_status' => '0',
+                'flow_status' => '2',
+                'show_type' => '0'
+            ]); 
+            $resultFirst=Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_node',$flow_node_pre)->find();
+            Db::table('flow_approval')->insert([
+                'busi_id' =>$busi_id,
+                'flow_no' => $resultFirst['flow_no'],
+                'flow_title' => $resultFirst['flow_title'],
+                'flow_node' => $resultFirst['flow_node'],
+                'flow_node_name' => $resultFirst['flow_node_name'],
+                'approval_id' => $resultFirst['approval_id'],
+                'approval_name' => $resultFirst['approval_name'],
+                'approve_status' => '1',
+                'flow_status' => '1',
+                'approval_content' => '',
+                'show_type' => '1'
+            ]); 
+            Db::commit();
+            return json(['message' => '退回上一步成功', 'code' => 200]);
+        }  catch (Exception $e) {
+            Db::rollback();
+            return json(['message' => '退回上一步失败', 'code' => 300]);
+        }
+    }
+    //流程跟踪
+    public function trace()
+    {
+        $busi_id=Request::param('busi_id');
+        $result=Db::table('flow_approval')->where('busi_id', $busi_id)->order('id')->select();
+        return json(['data' => $result, 'code' => 200]);
+           
+    }
+    
+    //查询需求预估汇总
+    public function searchDemandTotal()
+{
+    $page = Request::param('page', 1);
+    $pageSize = Request::param('pageSize', 10);
+    $inst_code = Request::param('instCode');
+    $user_name = Request::param('user_name');
+    $time = Request::param('time');
+    $timeStart =  date('Y-m-d', strtotime($time[0]));
+    $timeEnd =date('Y-m-d', strtotime($time[1]));
+
+    if ($inst_code === '100001') {
+        $inst_code_array = Db::table('inst')->select()->column('inst_code');
+    } else if (strlen($inst_code) === 6) {
+        $inst_code_array = Db::table('inst')->where('up_inst_code', $inst_code)->column('inst_code');
+    } else {
+        $inst_code_array = [$inst_code];
+    }
+    $inst_code_str = "'". implode("', '", $inst_code_array)."'";
+    $offset = ($page - 1) * $pageSize;
+    $sql = "SELECT material_code,material_name,material_type,consumable, SUM(num) AS num FROM (
+        SELECT b.material_code,b.material_name, b.num,c.material_type,c.consumable FROM (
+        SELECT * FROM flow_approval WHERE flow_status = '5' GROUP BY busi_id 
+        ) a INNER JOIN (
+        SELECT * FROM demand_forecast where DATE(time)>? and DATE(time)<? and inst_code in (".$inst_code_str.")  and user_name LIKE CONCAT('%',?, '%')
+        ) b ON a.busi_id = b.busi_id 
+        INNER JOIN materialinfo c ON b.material_code = c.material_code 
+        ) AS subquery GROUP BY material_code,material_name,material_type,consumable
+         LIMIT {$offset}, {$pageSize};";
+    $sql1 = "SELECT material_code,material_name,material_type,consumable, SUM(num) AS num FROM (
+        SELECT b.material_code,b.material_name, b.num,c.material_type,c.consumable FROM (
+        SELECT * FROM flow_approval WHERE flow_status = '5' GROUP BY busi_id 
+        ) a INNER JOIN (
+        SELECT * FROM demand_forecast where DATE(time)>? and DATE(time)<? and inst_code in (".$inst_code_str.") and user_name LIKE CONCAT('%',?, '%')
+        ) b ON a.busi_id = b.busi_id 
+        INNER JOIN materialinfo c ON b.material_code = c.material_code 
+        ) AS subquery GROUP BY material_code,material_name,material_type,consumable;";
+    $result = Db::query($sql, [$timeStart, $timeEnd,$user_name]);
+    $result1= Db::query($sql1, [$timeStart, $timeEnd,$user_name]);
+    return json(['data' => $result, 'total' => count($result1),'code' => 200]);
+ }
+  //导出需求预估汇总
+  public function exportDemandTotal()
+  {
+      $inst_code = Request::param('instCode');
+      $time = Request::param('time');
+      $user_name = Request::param('user_name');
+      $timeStart =  date('Y-m-d', strtotime($time[0]));
+      $timeEnd =date('Y-m-d', strtotime($time[1]));
+  
+      if ($inst_code === '100001') {
+          $inst_code_array = Db::table('inst')->select()->column('inst_code');
+      } else if (strlen($inst_code) === 6) {
+          $inst_code_array = Db::table('inst')->where('up_inst_code', $inst_code)->column('inst_code');
+      } else {
+          $inst_code_array = [$inst_code];
+      }
+      $inst_code_str = "'". implode("', '", $inst_code_array)."'";
+      $sql1 = "SELECT material_code,material_name,material_type,consumable, SUM(num) AS num FROM (
+          SELECT b.material_code,b.material_name, b.num,c.material_type,c.consumable FROM (
+          SELECT * FROM flow_approval WHERE flow_status = '5' GROUP BY busi_id 
+          ) a INNER JOIN (
+          SELECT * FROM demand_forecast where DATE(time)>? and DATE(time)<? and inst_code in (".$inst_code_str.") and user_name LIKE CONCAT('%',?, '%')
+          ) b ON a.busi_id = b.busi_id 
+          INNER JOIN materialinfo c ON b.material_code = c.material_code 
+          ) AS subquery GROUP BY material_code,material_name,material_type,consumable;";
+      $result1= Db::query($sql1, [$timeStart, $timeEnd,$user_name]);
+      return json(['data' => $result1, 'total' => count($result1),'code' => 200]);
+   }
+
+   
+  //模糊查询客户姓名
+  public function searchCustList()
+  {
+      $custom_name = Request::param('custom_name');
+      $user_id = Request::param('user_id');
+      $sql = "select a.*,b.employee_name from (SELECT * FROM custominfo where manager_code=? and custom_name LIKE CONCAT('%',?, '%'))a left join employee b on  a.manager_code=b.employee_code";
+      $result= Db::query($sql, [$user_id,$custom_name]);
+      return json(['data' => $result,'code' => 200]);
+   } 
+   //查询该市场部可申请的物资种类
+   public function searchDepartWz()
+   {
+    
+       $inst_code = Request::param('inst_code');
+       $material_name = Request::param('material_name');
+       $sql = "SELECT * FROM materialinfo where material_name LIKE CONCAT('%',?, '%') and inst_code=? and history_type='0'";
+        $result= Db::query($sql, [$material_name, $inst_code]);
+        return json(['data' => $result,'code' => 200]);
+    }
+    //提交物料申请
+    public function submitWzApply()
+    {
+        $custom_name = Request::param('custom_name');
+        $operator_name = Request::param('operator_name');
+        $custom_license = Request::param('custom_license');
+        $operator_telephone = Request::param('operator_telephone');
+        $custom_address = Request::param('custom_address');
+        $employee_name = Request::param('employee_name');
+        $material_code = Request::param('material_code');
+        $material_name = Request::param('material_name');
+        $terminal_level = Request::param('terminal_level');
+        $consumable = Request::param('consumable');
+        $num = Request::param('num');
+        $user_id = Request::param('user_id');
+        $user_name = Request::param('user_name');
+        $inst_code = Request::param('inst_code');
+        $inst_name = Request::param('inst_name');
+        $telephone = Request::param('telephone');
+        $flow_no = Request::param('flow_no');
+        $flow_title = Request::param('flow_title');
+        $flow_node = Request::param('flow_node');
+        $flow_node_name = Request::param('flow_node_name');
+        $approval_name = Request::param('approval_name');
+        $approval_content = Request::param('approval_content');
+        $next_approval_id = Request::param('next_approval_id');
+        $next_approval_name = Request::param('next_approval_name');
+        $busi_id=Request::param('busi_id');
+        $time =  date('Y-m-d H:i:s');
+        Db::startTrans();
+        try {
+            //第一步没有busi_id插入，有则第一步退回后更新
+            if(empty($busi_id)){
+                $busi_id = $this->generateBusiId();
+                    try {
+                        Db::table('wz_apply')->insert([
+                            'busi_id' =>$busi_id,
+                            'custom_name' => $custom_name,
+                            'operator_name' => $operator_name,
+                            'custom_license' => $custom_license,
+                            'operator_telephone' => $operator_telephone,
+                            'custom_address' =>  $custom_address,
+                            'employee_name' =>  $employee_name,
+                            'material_code' =>  $material_code,
+                            'material_name' =>  $material_name,
+                            'terminal_level' =>  $terminal_level,
+                            'consumable' =>  $consumable,
+                            'num' =>  $num,
+                            'flow_no' => $flow_no,
+                            'flow_title' => $flow_title,
+                            'user_id' => $user_id,
+                            'user_name' => $user_name,
+                            'inst_code' => $inst_code ,
+                            'inst_name' => $inst_name ,
+                            'telephone' => $telephone,
+                            'time' =>  $time,
+                        ]); 
+                    } catch (Exception $e) {
+                        Db::rollback();
+                        return json(['message' => '数据库插入失败', 'code' => 300]);
+                    }
+            }else{
+                //退回后再提交删除原来数据，新增新的数据
+                if($flow_node==='1'){
+                    DB::table('wz_apply')->where("busi_id",$busi_id)->delete();
+                    try {
+                        Db::table('wz_apply')->insert([
+                            'busi_id' =>$busi_id,
+                            'custom_name' => $custom_name,
+                            'operator_name' => $operator_name,
+                            'custom_license' => $custom_license,
+                            'operator_telephone' => $operator_telephone,
+                            'custom_address' =>  $custom_address,
+                            'employee_name' =>  $employee_name,
+                            'material_code' =>  $material_code,
+                            'material_name' =>  $material_name,
+                            'terminal_level' =>  $terminal_level,
+                            'consumable' =>  $consumable,
+                            'num' =>  $num,
+                            'flow_no' => $flow_no,
+                            'flow_title' => $flow_title,
+                            'user_id' => $user_id,
+                            'user_name' => $user_name,
+                            'inst_code' => $inst_code ,
+                            'inst_name' => $inst_name ,
+                            'telephone' => $telephone,
+                            'time' =>  $time,
+                        ]); 
+                    } catch (Exception $e) {
+                        Db::rollback();
+                        return json(['message' => '数据库插入失败', 'code' => 300]);
+                    }
+                }
+            }
+            try { 
+                //发起插入当前和后一节点，之后审批更新当前节点，后一节点不为-99时插入后一节点
+                $nextFlowNode= Db::table('flow') ->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->find();
+                if($flow_node==='1'){
+                    $currentFlowApproval= Db::table('flow_approval') ->where('busi_id', $busi_id)->where('flow_node',  $flow_node)->find();
+                    if ($currentFlowApproval == null || count($currentFlowApproval) === 0) {
+                        Db::table('flow_approval')->insert([
+                            'busi_id' =>$busi_id,
+                            'flow_no' => $flow_no,
+                            'flow_title' => $flow_title,
+                            'flow_node' => $flow_node,
+                            'flow_node_name' => $flow_node_name,
+                            'approval_id' => $user_id,
+                            'approval_name' => $approval_name,
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time,
+                            'show_type' => '1'
+                        ]); 
+                    } else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_node', $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_time' => $time
+                        ]); 
+                    }
+                }else{
+                    //如果当前节点不是最后一个节点
+                    if($nextFlowNode['flow_node_next'] != '-99'){
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time
+                        ]); 
+                    }else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '5',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time
+                        ]); 
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)
+                        ->update([
+                            'flow_status' => '5'
+                        ]);
+                        $wzReslut= Db::table('materialinfo')->where('material_code', $material_code)->where('inst_code', $inst_code)->find();
+                        if((int)$wzReslut['inventory_quantity']< (int)$num){
+                            Db::rollback();
+                            return json(['message' => '该物料库存不足', 'code' => 300]);
+                        }else{
+                            $remainNum=(int)$wzReslut['inventory_quantity']- (int)$num;
+                            Db::table('materialinfo')->where('material_code', $material_code)->where('inst_code', $inst_code)
+                            ->update([
+                                'inventory_quantity' => $remainNum
+                            ]);
+                            $userIdList=Db::table('wz_apply')->where('busi_id', $busi_id)->find();
+                            try {
+                                Db::table('materialinfo_record')->insert([
+                                    'material_code' => $material_code,
+                                    'material_name' => $material_name,
+                                    'quantity' => $num,
+                                    'inventory_quantity' => $wzReslut['inventory_quantity'],
+                                    'inst_code' => $inst_code,
+                                    'type' => '库存认领',
+                                    'allocate_time' => date('Y-m-d H:i:s'), // 使用当前时间
+                                    'allocate_person' => $userIdList['user_id'], // 使用当前时间
+                                ]);
+                            } catch (Exception $e) {
+                                Db::rollback();
+                                return json(['data' => ['message' => '数据库分配记录插入失败'], 'code' => 300]);
+                            }
+                        }
+                    }
+                }       
+                if($nextFlowNode['flow_node_next'] != '-99'){
+                    $flow_node_next = $nextFlowNode['flow_node_next'];
+                    $nextList= Db::table('flow') ->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)->find();
+                    $flow_node_name_next = $nextList['flow_node_name'];
+                    $nextResultList= Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)->select();
+                    if($nextResultList  === null || count($nextResultList) === 0){
+                    }else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)
+                        ->update([
+                            'show_type' => '0'
+                        ]); 
+                    }
+                    Db::table('flow_approval')->insert([
+                        'busi_id' =>$busi_id,
+                        'flow_no' => $flow_no,
+                        'flow_title' => $flow_title,
+                        'flow_node' => $flow_node_next,
+                        'flow_node_name' => $flow_node_name_next,
+                        'approval_id' => $next_approval_id,
+                        'approval_name' => $next_approval_name,
+                        'approve_status' => '1',
+                        'flow_status' => '1',
+                        'approval_content' => '',
+                        'show_type' => '1'
+                    ]); 
+                }
+            } catch (Exception $e) {
+                Db::rollback();
+                return json(['message' => '数据库插入失败', 'code' => 300]);
+            }
+            Db::commit();
+            if($flow_node==='1'){
+                return json(['message' => '流程已提交', 'code' => 200]);
+            }else{
+                return json(['message' => '流程已审批', 'code' => 200]);
+            }
+        } catch (Exception $e) {
+            // 回滚事务
+            Db::rollback();
+            return json(['message' => '操作失败', 'code' => 300]);
+        }
+    }
+     //查询物资申请
+    public function searchWzApply()
+    {
+        $busi_id=Request::param('busi_id');
+        try {
+            $resultList = Db::table('wz_apply')
+            ->where('busi_id', $busi_id)
+            ->select();
+            return json(['data' => $resultList, 'code' => 200]);
+        }  catch (Exception $e) {
+            return json(['data' =>[],'message' => '查询物资申请失败', 'code' => 300]);
+        }
+    }
+    //查询发放进度
+    public function searchReviewProcess()
+    {
+        $procurement_time = Request::param('procurement_time');
+        $inst_code = Request::param('instCode');
+        $user_id = Request::param('user_id');
+        if(empty($inst_code)){
+            $sql = "select a.inst_code,a.inst_name, COALESCE(b.done_amount, 0) AS done_amount,
+                COALESCE(c.is_consumable, 0) AS is_consumable,
+                COALESCE(d.no_consumable, 0) AS no_consumable,
+                COALESCE(e.no_consumable_num, 0) AS no_consumable_num,
+                COALESCE(f.pt_price, 0) AS pt_price,
+                COALESCE(g.jm_price, 0) AS jm_price,
+                COALESCE(h.xd_price, 0) AS xd_price from(
+                (select inst_code,inst_name from inst where LENGTH(inst_code) = 7)a
+                left join 
+                (
+                select sum(b.num*d.material_price) as done_amount,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=?  group by busi_id))b 
+                left join materialinfo d on b.material_code=d.material_code and b.inst_code=d.inst_code 
+                group by b.inst_code
+                )b on a.inst_code=b.inst_code
+                left join 
+                (
+                select sum(b.num*d.material_price) as is_consumable,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and  consumable='1' group by busi_id))b 
+                left join (select * from materialinfo where consumable='1') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )c on a.inst_code=c.inst_code
+                left join 
+                (
+                select sum(b.num*d.material_price) as no_consumable,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )d on a.inst_code=d.inst_code
+                left join
+                (
+                select  sum(b.num) as no_consumable_num,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )e on a.inst_code=e.inst_code
+                left join (
+                select   sum(b.num*d.material_price) as pt_price,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                 and terminal_level='普通')b 
+                left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )f on a.inst_code=f.inst_code
+                left join (
+                select   sum(b.num*d.material_price) as jm_price,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                 and terminal_level='加盟')b 
+                left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )g on a.inst_code=g.inst_code 
+                left join (
+                select   sum(b.num*d.material_price) as xd_price,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                and terminal_level='现代')b 
+                left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )h on a.inst_code=h.inst_code
+                );"; 
+            $result= Db::query($sql, [$procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time,$procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time]);
+            return json(['data' => $result,'code' => 200]);
+        }else{
+            $sql = "select a.inst_code,a.inst_name, COALESCE(b.done_amount, 0) AS done_amount,
+                COALESCE(c.is_consumable, 0) AS is_consumable,
+                COALESCE(d.no_consumable, 0) AS no_consumable,
+                COALESCE(e.no_consumable_num, 0) AS no_consumable_num,
+                COALESCE(f.pt_price, 0) AS pt_price,
+                COALESCE(g.jm_price, 0) AS jm_price,
+                COALESCE(h.xd_price, 0) AS xd_price from(
+                (select inst_code,inst_name from inst where LENGTH(inst_code) = 7 and inst_code=?)a
+                left join 
+                (
+                select sum(b.num*d.material_price) as done_amount,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id))b 
+                left join materialinfo d on b.material_code=d.material_code and b.inst_code=d.inst_code 
+                group by b.inst_code
+                )b on a.inst_code=b.inst_code
+                left join 
+                (
+                select sum(b.num*d.material_price) as is_consumable,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=?  and consumable='1' group by busi_id))b 
+                left join (select * from materialinfo where consumable='1') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )c on a.inst_code=c.inst_code
+                left join 
+                (
+                select sum(b.num*d.material_price) as no_consumable,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )d on a.inst_code=d.inst_code
+                left join
+                (
+                select  sum(b.num) as no_consumable_num,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )e on a.inst_code=e.inst_code
+                left join (
+                select   sum(b.num*d.material_price) as pt_price,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                and terminal_level='普通')b 
+                left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )f on a.inst_code=f.inst_code
+                left join (
+                select   sum(b.num*d.material_price) as jm_price,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                and terminal_level='加盟')b 
+                left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )g on a.inst_code=g.inst_code 
+                left join (
+                select   sum(b.num*d.material_price) as xd_price,b.inst_code from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                and terminal_level='现代')b 
+                left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )h on a.inst_code=h.inst_code
+                );";
+            $result= Db::query($sql, [$inst_code, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time]);
+            return json(['data' => $result,'code' => 200]);
+        }
+    }
+     
+     
 }
+
+
