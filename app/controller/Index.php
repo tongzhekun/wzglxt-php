@@ -949,23 +949,59 @@ class Index extends BaseController
     //市场部数组
     public function treeSc()
     {
-        $inst_code = Request::param('inst_code');
-        $searchList = Db::table('inst');
-        if (!empty($inst_code)) { 
-            if(strlen($inst_code) === 7){
-                $searchList = $searchList->where('inst_code', $inst_code); 
-            }else if(strlen($inst_code) === 6){
-                $searchList = $searchList->where('up_inst_code', $inst_code); 
+            $inst_code = Request::param('inst_code');
+            if (!empty($inst_code)) { 
+                $instSql='select inst_code from inst where up_inst_code=? union all select inst_code from inst where up_inst_code in (select inst_code from inst where up_inst_code=? and inst_code IS NOT NULL) and up_inst_code IS NOT NULL';
+                $instResult= Db::query($instSql, [$inst_code, $inst_code]);
+                $instCodeArray = array_column($instResult, 'inst_code');
+                $inst_code_str = "'". implode("', '", $instCodeArray)."'";
+                if(strlen($inst_code) === 7){
+                    $sql = "select * from inst where LENGTH(inst_code) = 7 and inst_code =? order by inst_code"; 
+                    $result= Db::query($sql, [$inst_code]);
+                    if ($result == null || count($result) === 0) {
+                        $data['message'] = 'success';
+                        return json(['data' => [], 'code' => 200]);
+                    } else {
+                        $data['message'] = 'success';
+                        return json(['data' => $result, 'code' => 200]);
+                    }
+                }else if(strlen($inst_code) === 6){
+                    $sql = "select * from inst where LENGTH(inst_code) = 7 and inst_code in (".$inst_code_str.")  order by inst_code"; 
+                    $result= Db::query($sql);
+                    if ($result == null || count($result) === 0) {
+                        $data['message'] = 'success';
+                        return json(['data' => [], 'code' => 200]);
+                    } else {
+                        $data['message'] = 'success';
+                        return json(['data' => $result, 'code' => 200]);
+                    }
+                }
+            }else{
+                $sql = "select * from inst where LENGTH(inst_code) = 7  order by inst_code"; 
+                $result= Db::query($sql);
+                if ($result == null || count($result) === 0) {
+                    $data['message'] = 'success';
+                    return json(['data' => [], 'code' => 200]);
+                } else {
+                    $data['message'] = 'success';
+                    return json(['data' => $result, 'code' => 200]);
+                }
             }
-        }
-        $searchList = $searchList->whereRaw('LENGTH(inst_code) = 7')->order('inst_code')->select();
-        if ($searchList == null || count($searchList) === 0) {
-            $data['message'] = 'success';
-            return json(['data' => [], 'code' => 200]);
-        } else {
-            $data['message'] = 'success';
-            return json(['data' => $searchList, 'code' => 200]);
-        }
+    }
+    //某一市场部的客户经理下拉
+    public function empSc()
+    {
+            $inst_code = Request::param('inst_code');
+            $sql = "select * from employee where  inst_code =? order by employee_code"; 
+            $result= Db::query($sql, [$inst_code]);
+            if ($result == null || count($result) === 0) {
+                $data['message'] = 'success';
+                return json(['data' => [], 'code' => 200]);
+            } else {
+                $data['message'] = 'success';
+                return json(['data' => $result, 'code' => 200]);
+            }
+                
     }
 
     //导入库存
@@ -1571,6 +1607,196 @@ class Index extends BaseController
 
         
     }
+    
+    //提交需求预估汇总流程
+    public function submitDemandTotal()
+    {
+        $loanData = Request::param('loanData');
+        $user_id = Request::param('user_id');
+        $year = Request::param('year');
+        $user_name = Request::param('user_name');
+        $inst_code = Request::param('inst_code');
+        $inst_name = Request::param('inst_name');
+        $dateRange = Request::param('dateRange');
+        $time_start =  date('Y-m-d', strtotime($dateRange[0]));
+        $time_end =date('Y-m-d', strtotime($dateRange[1]));
+        $flow_no = Request::param('flow_no');
+        $flow_title = Request::param('flow_title');
+        $flow_node = Request::param('flow_node');
+        $flow_node_name = Request::param('flow_node_name');
+        $approval_name = Request::param('approval_name');
+        $approval_content = Request::param('approval_content');
+        $next_approval_id = Request::param('next_approval_id');
+        $next_approval_name = Request::param('next_approval_name');
+        $busi_id=Request::param('busi_id');
+        $time =  date('Y-m-d H:i:s');
+        Db::startTrans();
+        try {
+            //第一步没有busi_id插入，有则第一步退回后更新
+            if(empty($busi_id)){
+                $busi_id = $this->generateBusiId();
+                foreach ($loanData as $item) {
+                    $material_code = $item['material_code'];
+                    $material_name = $item['material_name'];
+                    $material_type = $item['material_type'];
+                    $consumable = $item['consumable'];
+                    $num = $item['num'];
+                    try {
+                        Db::table('demand_forecast_total')->insert([
+                            'busi_id' =>$busi_id,
+                            'material_code' => $material_code,
+                            'material_name' => $material_name,
+                            'material_type' => $material_type,
+                            'year' => $year,
+                            'consumable' => $consumable,
+                            'num' =>  $num,
+                            'flow_no' => $flow_no,
+                            'flow_title' => $flow_title,
+                            'user_id' => $user_id,
+                            'user_name' => $user_name,
+                            'inst_code' => $inst_code ,
+                            'inst_name' => $inst_name ,
+                            'time_start' => $time_start,
+                            'time_end' => $time_end,
+                            'time' =>  $time,
+                        ]); 
+                    } catch (Exception $e) {
+                        Db::rollback();
+                        return json(['message' => '数据库插入失败', 'code' => 300]);
+                    }
+                } 
+            }else{
+                //退回后再提交删除原来数据，新增新的数据
+                if($flow_node==='1'){
+                    DB::table('demand_forecast_total')->where("busi_id",$busi_id)->delete();
+                    foreach ($loanData as $item) {
+                        $material_code = $item['material_code'];
+                        $material_name = $item['material_name'];
+                        $material_type = $item['material_type'];
+                        $consumable = $item['consumable'];
+                        $num = $item['num'];
+                        try {
+                            Db::table('demand_forecast_total')->insert([
+                                'busi_id' =>$busi_id,
+                                'material_code' => $material_code,
+                                'material_name' => $material_name,
+                                'material_type' => $material_type,
+                                'year' => $year,
+                                'consumable' => $consumable,
+                                'num' =>  $num,
+                                'flow_no' => $flow_no,
+                                'flow_title' => $flow_title,
+                                'user_id' => $user_id,
+                                'user_name' => $user_name,
+                                'inst_code' => $inst_code ,
+                                'inst_name' => $inst_name ,
+                                'time_start' => $time_start,
+                                'time_end' => $time_end,
+                                'time' =>  $time,
+                            ]); 
+                        } catch (Exception $e) {
+                            Db::rollback();
+                            return json(['message' => '数据库插入失败', 'code' => 300]);
+                        }
+                    } 
+                }
+            }
+            try { 
+                //发起插入当前和后一节点，之后审批更新当前节点，后一节点不为-99时插入后一节点
+                $nextFlowNode= Db::table('flow') ->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->find();
+                if($flow_node==='1'){
+                    $currentFlowApproval= Db::table('flow_approval') ->where('busi_id', $busi_id)->where('flow_node',  $flow_node)->find();
+                    if ($currentFlowApproval == null || count($currentFlowApproval) === 0) {
+                        Db::table('flow_approval')->insert([
+                            'busi_id' =>$busi_id,
+                            'flow_no' => $flow_no,
+                            'flow_title' => $flow_title,
+                            'flow_node' => $flow_node,
+                            'flow_node_name' => $flow_node_name,
+                            'approval_id' => $user_id,
+                            'approval_name' => $approval_name,
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time,
+                            'show_type' => '1'
+                        ]); 
+                    } else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_node', $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_time' => $time
+                        ]); 
+                    }
+                }else{
+                    //如果当前节点不是最后一个节点
+                    if($nextFlowNode['flow_node_next'] != '-99'){
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time
+                        ]); 
+                    }else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '5',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time
+                        ]); 
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)
+                        ->update([
+                            'flow_status' => '5'
+                        ]); 
+                    }
+                }       
+                if($nextFlowNode['flow_node_next'] != '-99'){
+                    $flow_node_next = $nextFlowNode['flow_node_next'];
+                    $nextList= Db::table('flow') ->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)->find();
+                    $flow_node_name_next = $nextList['flow_node_name'];
+                    $nextResultList= Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)->select();
+                    if($nextResultList  === null || count($nextResultList) === 0){
+                    }else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)
+                        ->update([
+                            'show_type' => '0'
+                        ]); 
+                    }
+                    Db::table('flow_approval')->insert([
+                        'busi_id' =>$busi_id,
+                        'flow_no' => $flow_no,
+                        'flow_title' => $flow_title,
+                        'flow_node' => $flow_node_next,
+                        'flow_node_name' => $flow_node_name_next,
+                        'approval_id' => $next_approval_id,
+                        'approval_name' => $next_approval_name,
+                        'approve_status' => '1',
+                        'flow_status' => '1',
+                        'approval_content' => '',
+                        'show_type' => '1'
+                    ]); 
+                }
+            } catch (Exception $e) {
+                Db::rollback();
+                return json(['message' => '数据库插入失败', 'code' => 300]);
+            }
+            Db::commit();
+            if($flow_node==='1'){
+                return json(['message' => '流程已提交', 'code' => 200]);
+            }else{
+                return json(['message' => '流程已审批', 'code' => 200]);
+            }
+        } catch (Exception $e) {
+            // 回滚事务
+            Db::rollback();
+            return json(['message' => '操作失败', 'code' => 300]);
+        }
+
+        
+    }
     //查询下一审批人
     public function searchNextApproval()
     {
@@ -1609,9 +1835,9 @@ class Index extends BaseController
         $busi_id=Request::param('busi_id');
         $approve_status=Request::param('approve_status');
         try {
-            $resultList = Db::table('flow_approval')->page($page, $pageSize)
+            $resultList = Db::table('flow_approval')->where('show_type','1')->page($page, $pageSize)
             ->order('approval_time', 'DESC');
-            $total = Db::table('flow_approval');
+            $total = Db::table('flow_approval')->where('show_type','1');
             if (!empty($approve_status)) {
                 $resultList = $resultList->where('approve_status','1');;
                 $total = $total->where('approve_status','1');;
@@ -1694,6 +1920,19 @@ class Index extends BaseController
             return json(['data' => $resultList, 'code' => 200]);
         }  catch (Exception $e) {
             return json(['data' =>[],'message' => '查询需求预估失败', 'code' => 300]);
+        }
+    }
+    //查询需求预估汇总申请
+    public function searchDemandApplyTotal()
+    {
+        $busi_id=Request::param('busi_id');
+        try {
+            $resultList = Db::table('demand_forecast_total')
+            ->where('busi_id', $busi_id)
+            ->select();
+            return json(['data' => $resultList, 'code' => 200]);
+        }  catch (Exception $e) {
+            return json(['data' =>[],'message' => '查询需求预估汇总申请失败', 'code' => 300]);
         }
     }
     //查询当前是不是最后一个节点
@@ -2089,26 +2328,43 @@ class Index extends BaseController
                             Db::rollback();
                             return json(['message' => '该物料库存不足', 'code' => 300]);
                         }else{
-                            $remainNum=(int)$wzReslut['inventory_quantity']- (int)$num;
-                            Db::table('materialinfo')->where('material_code', $material_code)->where('inst_code', $inst_code)
-                            ->update([
-                                'inventory_quantity' => $remainNum
-                            ]);
-                            $userIdList=Db::table('wz_apply')->where('busi_id', $busi_id)->find();
-                            try {
-                                Db::table('materialinfo_record')->insert([
-                                    'material_code' => $material_code,
-                                    'material_name' => $material_name,
-                                    'quantity' => $num,
-                                    'inventory_quantity' => $wzReslut['inventory_quantity'],
-                                    'inst_code' => $inst_code,
-                                    'type' => '库存认领',
-                                    'allocate_time' => date('Y-m-d H:i:s'), // 使用当前时间
-                                    'allocate_person' => $userIdList['user_id'], // 使用当前时间
-                                ]);
-                            } catch (Exception $e) {
+                            //定额标准
+                            $standardReslut= Db::table('custominfo')->where('custom_license', $custom_license)->find();
+                            if((int)$wzReslut['material_price'] * (int)$num >  (int)$standardReslut['remain_standard']){
                                 Db::rollback();
-                                return json(['data' => ['message' => '数据库分配记录插入失败'], 'code' => 300]);
+                                return json(['message' => '该客户剩余定额标准不足', 'code' => 300]);
+                            }else{
+                                $remainNum=(int)$wzReslut['inventory_quantity']- (int)$num;
+                                $remainStandardNum=(int)$standardReslut['remain_standard']- (int)$wzReslut['material_price'] * (int)$num;
+                                try {
+                                    Db::table('materialinfo')->where('material_code', $material_code)->where('inst_code', $inst_code)
+                                    ->update([
+                                        'inventory_quantity' => $remainNum
+                                    ]);
+                                    Db::table('custominfo')->where('custom_license', $custom_license)
+                                    ->update([
+                                        'remain_standard' => $remainStandardNum
+                                    ]);
+                                } catch (Exception $e) {
+                                    Db::rollback();
+                                    return json(['data' => ['message' => '数据库库存更新失败'], 'code' => 300]);
+                                }
+                                $userIdList=Db::table('wz_apply')->where('busi_id', $busi_id)->find();
+                                try {
+                                    Db::table('materialinfo_record')->insert([
+                                        'material_code' => $material_code,
+                                        'material_name' => $material_name,
+                                        'quantity' => $num,
+                                        'inventory_quantity' => $wzReslut['inventory_quantity'],
+                                        'inst_code' => $inst_code,
+                                        'type' => '库存认领',
+                                        'allocate_time' => date('Y-m-d H:i:s'), // 使用当前时间
+                                        'allocate_person' => $userIdList['user_id'], // 使用当前时间
+                                    ]);
+                                } catch (Exception $e) {
+                                    Db::rollback();
+                                    return json(['data' => ['message' => '数据库分配记录插入失败'], 'code' => 300]);
+                                }
                             }
                         }
                     }
@@ -2175,14 +2431,20 @@ class Index extends BaseController
         $inst_code = Request::param('instCode');
         $user_id = Request::param('user_id');
         if(empty($inst_code)){
+            $employeeResult= Db::table('employee') ->where('employee_code', $user_id)->find();
+            $inst_code_str = $employeeResult['inst_code'];
+            $instSql='select inst_code from inst where up_inst_code=? union all select inst_code from inst where up_inst_code in (select inst_code from inst where up_inst_code=? and inst_code IS NOT NULL) and up_inst_code IS NOT NULL';
+            $instResult= Db::query($instSql, [$inst_code_str, $inst_code_str]);
+            $instCodeArray = array_column($instResult, 'inst_code');
+            $inst_code_str1 = "'". implode("', '", $instCodeArray)."'";
             $sql = "select a.inst_code,a.inst_name, COALESCE(b.done_amount, 0) AS done_amount,
                 COALESCE(c.is_consumable, 0) AS is_consumable,
                 COALESCE(d.no_consumable, 0) AS no_consumable,
                 COALESCE(e.no_consumable_num, 0) AS no_consumable_num,
                 COALESCE(f.pt_price, 0) AS pt_price,
                 COALESCE(g.jm_price, 0) AS jm_price,
-                COALESCE(h.xd_price, 0) AS xd_price from(
-                (select inst_code,inst_name from inst where LENGTH(inst_code) = 7)a
+                COALESCE(h.xd_price, 0) AS xd_price from(  
+                (select inst_code,inst_name from inst where LENGTH(inst_code) = 7 and inst_code in (".$inst_code_str1."))a
                 left join 
                 (
                 select sum(b.num*d.material_price) as done_amount,b.inst_code from ( 
@@ -2219,7 +2481,7 @@ class Index extends BaseController
                 select   sum(b.num*d.material_price) as pt_price,b.inst_code from ( 
                 select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
                 ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
-                 and terminal_level='普通')b 
+                    and terminal_level='普通')b 
                 left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
                 group by b.inst_code
                 )f on a.inst_code=f.inst_code
@@ -2227,7 +2489,7 @@ class Index extends BaseController
                 select   sum(b.num*d.material_price) as jm_price,b.inst_code from ( 
                 select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
                 ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
-                 and terminal_level='加盟')b 
+                    and terminal_level='加盟')b 
                 left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
                 group by b.inst_code
                 )g on a.inst_code=g.inst_code 
@@ -2239,7 +2501,7 @@ class Index extends BaseController
                 left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
                 group by b.inst_code
                 )h on a.inst_code=h.inst_code
-                );"; 
+                ) order by inst_code;"; 
             $result= Db::query($sql, [$procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time,$procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time]);
             return json(['data' => $result,'code' => 200]);
         }else{
@@ -2311,7 +2573,391 @@ class Index extends BaseController
             $result= Db::query($sql, [$inst_code, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time]);
             return json(['data' => $result,'code' => 200]);
         }
+        
     }
+    //查询发放进度-客户经理
+    public function searchReviewProcessKhjl()
+    {
+        $procurement_time = Request::param('procurement_time');
+        $inst_code = Request::param('instCode');
+        $role = Request::param('role');
+        $user_id = Request::param('user_id');
+        if($role ==='1'){
+            if(!empty($user_id)){
+                $sql = "select a.user_id,a.user_name, COALESCE(b.done_amount, 0) AS done_amount,
+                    COALESCE(c.is_consumable, 0) AS is_consumable,
+                    COALESCE(d.no_consumable, 0) AS no_consumable,
+                    COALESCE(e.no_consumable_num, 0) AS no_consumable_num,
+                    COALESCE(f.pt_price, 0) AS pt_price,
+                    COALESCE(g.jm_price, 0) AS jm_price,
+                    COALESCE(h.xd_price, 0) AS xd_price from(
+                    (select user_id,user_name from wz_apply where SUBSTRING(time,1,4)=? and user_id=?  and busi_id in
+                     ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=?  group by busi_id) group by user_id
+                    )a
+                    left join 
+                    (
+                    select sum(b.num*d.material_price) as done_amount,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=?  and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=?  group by busi_id))b 
+                    left join materialinfo d on b.material_code=d.material_code and b.inst_code=d.inst_code 
+                    group by b.user_id
+                    )b on a.user_id=b.user_id
+                    left join 
+                    (
+                    select sum(b.num*d.material_price) as is_consumable,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=?  and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and  consumable='1' group by busi_id))b 
+                    left join (select * from materialinfo where consumable='1') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )c on a.user_id=c.user_id
+                    left join 
+                    (
+                    select sum(b.num*d.material_price) as no_consumable,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=?  and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                    left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.inst_code
+                    )d on a.user_id=d.user_id
+                    left join
+                    (
+                    select  sum(b.num) as no_consumable_num,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=?  and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                    left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )e on a.user_id=e.user_id
+                    left join (
+                    select   sum(b.num*d.material_price) as pt_price,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=?  and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                     and terminal_level='普通')b 
+                    left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )f on a.user_id=f.user_id
+                    left join (
+                    select   sum(b.num*d.material_price) as jm_price,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=?  and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                     and terminal_level='加盟')b 
+                    left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )g on a.user_id=g.user_id 
+                    left join (
+                    select   sum(b.num*d.material_price) as xd_price,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=?  and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                    and terminal_level='现代')b 
+                    left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )h on a.user_id=h.user_id
+                    );"; 
+                $result= Db::query($sql, [$procurement_time,$user_id,$procurement_time,$procurement_time, $user_id,$procurement_time, $procurement_time,$user_id, $procurement_time, $procurement_time,$user_id, $procurement_time, $procurement_time,$user_id,$procurement_time, $procurement_time, $user_id,$procurement_time, $procurement_time,$user_id, $procurement_time, $procurement_time, $user_id,$procurement_time]);
+                return json(['data' => $result,'code' => 200]);
+            }else{
+                $sql = "select a.user_id,a.user_name, COALESCE(b.done_amount, 0) AS done_amount,
+                    COALESCE(c.is_consumable, 0) AS is_consumable,
+                    COALESCE(d.no_consumable, 0) AS no_consumable,
+                    COALESCE(e.no_consumable_num, 0) AS no_consumable_num,
+                    COALESCE(f.pt_price, 0) AS pt_price,
+                    COALESCE(g.jm_price, 0) AS jm_price,
+                    COALESCE(h.xd_price, 0) AS xd_price from(
+                     (select user_id,user_name from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                     ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and inst_code=? group by busi_id) group by user_id
+                    )a
+                    left join 
+                    (
+                    select sum(b.num*d.material_price) as done_amount,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id))b 
+                    left join materialinfo d on b.material_code=d.material_code and b.inst_code=d.inst_code 
+                    group by b.user_id
+                    )b on a.user_id=b.user_id
+                    left join 
+                    (
+                    select sum(b.num*d.material_price) as is_consumable,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=?  and consumable='1' group by busi_id))b 
+                    left join (select * from materialinfo where consumable='1') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )c on a.user_id=c.user_id
+                    left join 
+                    (
+                    select sum(b.num*d.material_price) as no_consumable,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                    left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )d on a.user_id=d.user_id
+                    left join
+                    (
+                    select  sum(b.num) as no_consumable_num,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                    left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )e on a.user_id=e.user_id
+                    left join (
+                    select   sum(b.num*d.material_price) as pt_price,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                    and terminal_level='普通')b 
+                    left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )f on a.user_id=f.user_id
+                    left join (
+                    select   sum(b.num*d.material_price) as jm_price,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                    and terminal_level='加盟')b 
+                    left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )g on a.user_id=g.user_id 
+                    left join (
+                    select   sum(b.num*d.material_price) as xd_price,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                    and terminal_level='现代')b 
+                    left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )h on a.user_id=h.user_id
+                    );";
+                    $result= Db::query($sql, [$procurement_time,$procurement_time,$inst_code, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time]);
+                    return json(['data' => $result,'code' => 200]);
+            }
+        }else {
+            if(!empty($user_id)){
+                $sql = "select a.user_id,a.user_name, COALESCE(b.done_amount, 0) AS done_amount,
+                    COALESCE(c.is_consumable, 0) AS is_consumable,
+                    COALESCE(d.no_consumable, 0) AS no_consumable,
+                    COALESCE(e.no_consumable_num, 0) AS no_consumable_num,
+                    COALESCE(f.pt_price, 0) AS pt_price,
+                    COALESCE(g.jm_price, 0) AS jm_price,
+                    COALESCE(h.xd_price, 0) AS xd_price from(
+                    (select user_id,user_name from wz_apply where SUBSTRING(time,1,4)=? and user_id=?  and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=?  group by busi_id) group by user_id
+                    )a
+                    left join 
+                    (
+                    select sum(b.num*d.material_price) as done_amount,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=?  group by busi_id))b 
+                    left join materialinfo d on b.material_code=d.material_code and b.inst_code=d.inst_code 
+                    group by b.user_id
+                    )b on a.user_id=b.user_id
+                    left join 
+                    (
+                    select sum(b.num*d.material_price) as is_consumable,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and  consumable='1' group by busi_id))b 
+                    left join (select * from materialinfo where consumable='1') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )c on a.user_id=c.user_id
+                    left join 
+                    (
+                    select sum(b.num*d.material_price) as no_consumable,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                    left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.inst_code
+                    )d on a.user_id=d.user_id
+                    left join
+                    (
+                    select  sum(b.num) as no_consumable_num,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                    left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )e on a.user_id=e.user_id
+                    left join (
+                    select   sum(b.num*d.material_price) as pt_price,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                    and terminal_level='普通')b 
+                    left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )f on a.user_id=f.user_id
+                    left join (
+                    select   sum(b.num*d.material_price) as jm_price,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                    and terminal_level='加盟')b 
+                    left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )g on a.user_id=g.user_id 
+                    left join (
+                    select   sum(b.num*d.material_price) as xd_price,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                    and terminal_level='现代')b 
+                    left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )h on a.user_id=h.user_id
+                    );"; 
+                $result= Db::query($sql, [$procurement_time,$user_id,$procurement_time,$procurement_time,$user_id, $procurement_time, $procurement_time,$user_id, $procurement_time, $procurement_time,$user_id, $procurement_time, $procurement_time,$user_id,$procurement_time, $procurement_time,$user_id, $procurement_time, $procurement_time, $user_id,$procurement_time, $procurement_time,$user_id, $procurement_time]);
+                return json(['data' => $result,'code' => 200]);
+            }else{
+                $sql = "select a.user_id,a.user_name, COALESCE(b.done_amount, 0) AS done_amount,
+                    COALESCE(c.is_consumable, 0) AS is_consumable,
+                    COALESCE(d.no_consumable, 0) AS no_consumable,
+                    COALESCE(e.no_consumable_num, 0) AS no_consumable_num,
+                    COALESCE(f.pt_price, 0) AS pt_price,
+                    COALESCE(g.jm_price, 0) AS jm_price,
+                    COALESCE(h.xd_price, 0) AS xd_price from(
+                    (select user_id,user_name from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and inst_code=? group by busi_id) group by user_id
+                    )a
+                    left join 
+                    (
+                    select sum(b.num*d.material_price) as done_amount,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id))b 
+                    left join materialinfo d on b.material_code=d.material_code and b.inst_code=d.inst_code 
+                    group by b.user_id
+                    )b on a.user_id=b.user_id
+                    left join 
+                    (
+                    select sum(b.num*d.material_price) as is_consumable,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=?  and consumable='1' group by busi_id))b 
+                    left join (select * from materialinfo where consumable='1') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )c on a.user_id=c.user_id
+                    left join 
+                    (
+                    select sum(b.num*d.material_price) as no_consumable,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                    left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )d on a.user_id=d.user_id
+                    left join
+                    (
+                    select  sum(b.num) as no_consumable_num,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                    left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )e on a.user_id=e.user_id
+                    left join (
+                    select   sum(b.num*d.material_price) as pt_price,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                    and terminal_level='普通')b 
+                    left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )f on a.user_id=f.user_id
+                    left join (
+                    select   sum(b.num*d.material_price) as jm_price,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                    and terminal_level='加盟')b 
+                    left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )g on a.user_id=g.user_id 
+                    left join (
+                    select   sum(b.num*d.material_price) as xd_price,b.user_id from ( 
+                    select * from wz_apply where SUBSTRING(time,1,4)=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? group by busi_id)
+                    and terminal_level='现代')b 
+                    left join materialinfo  d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                    group by b.user_id
+                    )h on a.user_id=h.user_id
+                    );";
+                $result= Db::query($sql, [$procurement_time,$procurement_time,$inst_code, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time, $procurement_time]);
+                return json(['data' => $result,'code' => 200]);
+            } 
+        }
+    }
+    
+    //查询发放进度-客户
+    public function searchReviewProcessKh()
+    {
+        $procurement_time = Request::param('procurement_time');
+        $user_id = Request::param('user_id');
+        $custom_license = Request::param('custom_license');
+        if(empty($custom_license)){
+            $sql = "select a.custom_license,a.custom_name, COALESCE(b.done_amount, 0) AS done_amount,
+                COALESCE(c.is_consumable, 0) AS is_consumable,
+                COALESCE(d.no_consumable, 0) AS no_consumable,
+                COALESCE(e.quota_standard, 0) AS quota_standard,
+                COALESCE(e.remain_standard, 0) AS remain_standard from(
+                (select custom_name,custom_license from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=?  group by busi_id) group by custom_license
+                )a
+                left join 
+                (
+                select sum(b.num*d.material_price) as done_amount,b.custom_license from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=?  group by busi_id))b 
+                left join materialinfo d on b.material_code=d.material_code and b.inst_code=d.inst_code 
+                group by b.custom_license
+                )b on a.custom_license=b.custom_license
+                left join 
+                (
+                select sum(b.num*d.material_price) as is_consumable,b.custom_license from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and  consumable='1' group by busi_id))b 
+                left join (select * from materialinfo where consumable='1') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.custom_license
+                )c on a.custom_license=c.custom_license
+                left join 
+                (
+                select sum(b.num*d.material_price) as no_consumable,b.custom_license from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )d on a.custom_license=d.custom_license
+                left join 
+                (
+                    select custom_license,quota_standard,remain_standard from custominfo group by  custom_license
+                )e on a.custom_license=e.custom_license
+                );";
+                $result= Db::query($sql, [$procurement_time,$user_id,$procurement_time, $procurement_time,$user_id,$procurement_time, $procurement_time,$user_id,$procurement_time, $procurement_time,$user_id,$procurement_time]);
+                return json(['data' => $result,'code' => 200]);
+        } else{
+            $sql = "select a.custom_license,a.custom_name, COALESCE(b.done_amount, 0) AS done_amount,
+                COALESCE(c.is_consumable, 0) AS is_consumable,
+                COALESCE(d.no_consumable, 0) AS no_consumable,
+                COALESCE(e.quota_standard, 0) AS quota_standard,
+                COALESCE(e.remain_standard, 0) AS remain_standard from(
+                (select custom_name,custom_license from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and custom_license=? and busi_id in
+                    ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=?  group by busi_id) group by custom_license
+                )a
+                left join 
+                (
+                select sum(b.num*d.material_price) as done_amount,b.custom_license from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and custom_license=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=?  group by busi_id))b 
+                left join materialinfo d on b.material_code=d.material_code and b.inst_code=d.inst_code 
+                group by b.custom_license
+                )b on a.custom_license=b.custom_license
+                left join 
+                (
+                select sum(b.num*d.material_price) as is_consumable,b.custom_license from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and custom_license=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and  consumable='1' group by busi_id))b 
+                left join (select * from materialinfo where consumable='1') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.custom_license
+                )c on a.custom_license=c.custom_license
+                left join 
+                (
+                select sum(b.num*d.material_price) as no_consumable,b.custom_license from ( 
+                select * from wz_apply where SUBSTRING(time,1,4)=? and user_id=? and custom_license=? and busi_id in
+                ( select busi_id from flow_approval where flow_status='5'and (flow_no='3' or flow_no='4') and SUBSTRING(approval_time,1,4)=? and consumable='0' group by busi_id))b 
+                left join (select * from materialinfo where consumable='0') d on b.material_code=d.material_code and b.inst_code=d.inst_code
+                group by b.inst_code
+                )d on a.custom_license=d.custom_license
+                left join 
+                (
+                    select custom_license,quota_standard,remain_standard from custominfo group by  custom_license
+                )e on a.custom_license=e.custom_license
+                );";
+                $result= Db::query($sql, [$procurement_time,$user_id,$custom_license,$procurement_time, $procurement_time,$user_id,$custom_license,$procurement_time, $procurement_time,$user_id,$custom_license,$procurement_time, $procurement_time,$user_id,$custom_license,$procurement_time]);
+                return json(['data' => $result,'code' => 200]);
+        }
+    }
+    
      
      
 }
