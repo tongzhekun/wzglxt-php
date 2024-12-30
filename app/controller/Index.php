@@ -701,13 +701,20 @@ class Index extends BaseController
     
     //机构树
     public function tree()
-    {
-        $institutions = Db::table('inst')->select();
+    {   
+        $inst_code = Request::param('inst_code');
+        $sql = "select * from inst where inst_code=? 
+        union all 
+        select * from inst where inst_code in (select inst_code  from inst where up_inst_code=?)
+         union all 
+        select * from inst where inst_code in (select inst_code from inst where up_inst_code in (select inst_code  from inst where up_inst_code=?))";
+        $institutions= Db::query($sql, [$inst_code,$inst_code,$inst_code]);
         // 构建机构树的函数
         function buildInstitutionTree($institutions) {
+            $inst_code = Request::param('inst_code');
             $tree = [];
             foreach ($institutions as $institution) {
-                if ($institution["up_inst_code"] == "") {
+                if ($institution["inst_code"] == $inst_code) {
                     // 找到根节点，添加到树中并递归构建子节点
                     $tree[] = [
                         "label" => $institution["inst_name"],
@@ -1803,27 +1810,43 @@ class Index extends BaseController
         $inst_code = Request::param('inst_code');
         $flow_no = Request::param('flow_no');
         $flow_node = Request::param('flow_node');
-        //客户经理发起本机构审批，其他节点审批人为上层机构审批
-        if($flow_node==='1'){
-            $instList = Db::table('inst')->where('inst_code', $inst_code)->find();
-            $up_inst_code =$instList['inst_code'];
-            $up_inst_name =$instList['inst_name'];
-        }else{
-            $instList = Db::table('inst')->where('inst_code', $inst_code)->find();
-            $up_inst_code =$instList['up_inst_code'];
-            $up_inst_name =$instList['up_inst_name'];
-        }
-        try {
-            $roleIdList = Db::table('flow')->where('flow_no', $flow_no)->where('flow_node_pre', $flow_node)->find();
-            $role_id=$roleIdList['role_id'];
-            $result = Db::table('employee')
-                ->where('inst_code', $up_inst_code)
-                ->join('user_role', 'employee.employee_code = user_role.user_id', 'inner')
-                ->where('user_role.role_id', '=', $role_id)
-                ->select(); 
-            return json(['data' => $result, 'code' => 200]);
-        }  catch (Exception $e) {
-            return json(['message' => '查询审批人失败', 'code' => 300]);
+        if($flow_no==='1' || $flow_no==='2' || $flow_no==='3' || $flow_no==='4'){
+            //客户经理发起本机构审批，其他节点审批人为上层机构审批
+            if($flow_node==='1'){
+                $instList = Db::table('inst')->where('inst_code', $inst_code)->find();
+                $up_inst_code =$instList['inst_code'];
+                $up_inst_name =$instList['inst_name'];
+            }else{
+                $instList = Db::table('inst')->where('inst_code', $inst_code)->find();
+                $up_inst_code =$instList['up_inst_code'];
+                $up_inst_name =$instList['up_inst_name'];
+            }
+            try {
+                $roleIdList = Db::table('flow')->where('flow_no', $flow_no)->where('flow_node_pre', $flow_node)->find();
+                $role_id=$roleIdList['role_id'];
+                $result = Db::table('employee')
+                    ->where('inst_code', $up_inst_code)
+                    ->join('user_role', 'employee.employee_code = user_role.user_id', 'inner')
+                    ->where('user_role.role_id', '=', $role_id)
+                    ->select(); 
+                return json(['data' => $result, 'code' => 200]);
+            }  catch (Exception $e) {
+                return json(['message' => '查询审批人失败', 'code' => 300]);
+            }
+        }else if($flow_no==='5' ){
+            $inst_code='100001';
+            try {
+                $roleIdList = Db::table('flow')->where('flow_no', $flow_no)->where('flow_node_pre', $flow_node)->find();
+                $role_id=$roleIdList['role_id'];
+                $result = Db::table('employee')
+                    ->where('inst_code', $inst_code)
+                    ->join('user_role', 'employee.employee_code = user_role.user_id', 'inner')
+                    ->where('user_role.role_id', '=', $role_id)
+                    ->select(); 
+                return json(['data' => $result, 'code' => 200]);
+            }  catch (Exception $e) {
+                return json(['message' => '查询审批人失败', 'code' => 300]);
+            }
         }
     }
     //查询待办
@@ -1864,6 +1887,8 @@ class Index extends BaseController
         $pageSize = Request::param('pageSize', 10);
         $user_id=Request::param('user_id');
         $busi_id=Request::param('busi_id');
+        $flow_title=Request::param('flow_title');
+        $apply_name=Request::param('apply_name');
         try {
             $resultList = Db::table('flow_approval')
             ->where('approval_id', $user_id)
@@ -1872,15 +1897,44 @@ class Index extends BaseController
             if (!empty($busi_id)) {
                 $resultList = $resultList->where('busi_id',$busi_id);
             }
-            $resultList = $resultList->select();
-            
+            if (!empty($flow_title)) {
+                $resultList = $resultList->where('flow_title', 'like', '%' . $flow_title . '%');
+            }
+           $resultList = $resultList->select();
             // 用于存储最终处理后的数据
             $finalResultList = [];
             // 用于临时存储已经处理过的busi_id
             $processedBusiIds = [];
             foreach ($resultList as $row) {
                 $busi_id = $row['busi_id'];
-
+                if ($row['flow_no'] == '1' || $row['flow_no'] == '2') {
+                    $resultList1 = Db::table('demand_forecast')
+                    ->where('busi_id', $busi_id)
+                    ->find();
+                    $row['apply_id'] = $resultList1['user_id'];
+                    $row['apply_name'] = $resultList1['user_name'];
+                    $row['time'] =$resultList1['time'];
+                    $row['url'] ='/materialIssuance/demandForecastApprove';
+                }else if ($row['flow_no'] == '3' || $row['flow_no'] == '4') {
+                    $resultList1 = Db::table('wz_apply')
+                    ->where('busi_id', $busi_id)
+                    ->find();
+                    $row['apply_id'] = $resultList1['user_id'];
+                    $row['apply_name'] = $resultList1['user_name'];
+                    $row['time'] =$resultList1['time'];
+                    $row['url'] ='/materialIssuance/reviewApprove';
+                }else if ($row['flow_no'] == '5') {
+                    $resultList1 = Db::table('demand_forecast_total')
+                    ->where('busi_id', $busi_id)
+                    ->find();
+                    $row['apply_id'] = $resultList1['user_id'];
+                    $row['apply_name'] = $resultList1['user_name'];
+                    $row['time'] =$resultList1['time'];
+                    $row['url'] ='/materialIssuance/demandForecastTotalApplyApprove';
+                }
+                if (strpos($row['apply_name'], $apply_name) === false) {
+                    continue;
+                }
                 if (!in_array($busi_id, $processedBusiIds)) {
                     // 如果当前busi_id第一次出现，直接添加到最终结果列表
                     $finalResultList[] = $row;
@@ -2089,8 +2143,8 @@ class Index extends BaseController
            
     }
     
-    //查询需求预估汇总
-    public function searchDemandTotal()
+    //查询需求预估明细
+    public function searchDemandMx()
 {
     $page = Request::param('page', 1);
     $pageSize = Request::param('pageSize', 10);
@@ -2130,8 +2184,61 @@ class Index extends BaseController
     $result1= Db::query($sql1, [$timeStart, $timeEnd,$user_name]);
     return json(['data' => $result, 'total' => count($result1),'code' => 200]);
  }
-  //导出需求预估汇总
-  public function exportDemandTotal()
+  //查询需求预估汇总明细
+  public function searchDemandMxTotal()
+  {
+      $page = Request::param('page', 1);
+      $pageSize = Request::param('pageSize', 10);
+      $inst_code = Request::param('instCode');
+      $year = Request::param('year');
+      if(empty($inst_code)){
+        $offset = ($page - 1) * $pageSize;
+        $sql = "SELECT material_code,material_name,material_type,consumable, SUM(num) AS num FROM (
+            SELECT b.material_code,b.material_name, b.num,c.material_type,c.consumable FROM (
+            SELECT * FROM flow_approval WHERE flow_status = '5' GROUP BY busi_id 
+            ) a INNER JOIN (
+            SELECT * FROM demand_forecast_total where year=?  
+            ) b ON a.busi_id = b.busi_id 
+            INNER JOIN materialinfo c ON b.material_code = c.material_code 
+            ) AS subquery GROUP BY material_code,material_name,material_type,consumable
+            LIMIT {$offset}, {$pageSize};";
+        $sql1 = "SELECT material_code,material_name,material_type,consumable, SUM(num) AS num FROM (
+            SELECT b.material_code,b.material_name, b.num,c.material_type,c.consumable FROM (
+            SELECT * FROM flow_approval WHERE flow_status = '5' GROUP BY busi_id 
+            ) a INNER JOIN (
+            SELECT * FROM demand_forecast_total where year=? 
+            ) b ON a.busi_id = b.busi_id 
+            INNER JOIN materialinfo c ON b.material_code = c.material_code 
+            ) AS subquery GROUP BY material_code,material_name,material_type,consumable;";
+        $result = Db::query($sql, [$year]);
+        $result1= Db::query($sql1, [$year]);
+        return json(['data' => $result, 'total' => count($result1),'code' => 200]);
+      }else{
+        $offset = ($page - 1) * $pageSize;
+        $sql = "SELECT material_code,material_name,material_type,consumable, SUM(num) AS num FROM (
+            SELECT b.material_code,b.material_name, b.num,c.material_type,c.consumable FROM (
+            SELECT * FROM flow_approval WHERE flow_status = '5' GROUP BY busi_id 
+            ) a INNER JOIN (
+            SELECT * FROM demand_forecast_total where year=?  and inst_code=?
+            ) b ON a.busi_id = b.busi_id 
+            INNER JOIN materialinfo c ON b.material_code = c.material_code 
+            ) AS subquery GROUP BY material_code,material_name,material_type,consumable
+            LIMIT {$offset}, {$pageSize};";
+        $sql1 = "SELECT material_code,material_name,material_type,consumable, SUM(num) AS num FROM (
+            SELECT b.material_code,b.material_name, b.num,c.material_type,c.consumable FROM (
+            SELECT * FROM flow_approval WHERE flow_status = '5' GROUP BY busi_id 
+            ) a INNER JOIN (
+            SELECT * FROM demand_forecast_total where year=?  and inst_code=?
+            ) b ON a.busi_id = b.busi_id 
+            INNER JOIN materialinfo c ON b.material_code = c.material_code 
+            ) AS subquery GROUP BY material_code,material_name,material_type,consumable;";
+        $result = Db::query($sql, [$year,$inst_code]);
+        $result1= Db::query($sql1, [$year,$inst_code]);
+        return json(['data' => $result, 'total' => count($result1),'code' => 200]);
+      }
+   }
+  //导出需求预估明细
+  public function exportDemandMx()
   {
       $inst_code = Request::param('instCode');
       $time = Request::param('time');
@@ -2157,6 +2264,35 @@ class Index extends BaseController
           ) AS subquery GROUP BY material_code,material_name,material_type,consumable;";
       $result1= Db::query($sql1, [$timeStart, $timeEnd,$user_name]);
       return json(['data' => $result1, 'total' => count($result1),'code' => 200]);
+   }
+    //导出需求预估汇总明细
+  public function exportDemandMxTotal()
+  {
+      $inst_code = Request::param('instCode');
+      $year = Request::param('year');
+      if(empty($inst_code)){
+        $sql1 = "SELECT material_code,material_name,material_type,consumable, SUM(num) AS num FROM (
+            SELECT b.material_code,b.material_name, b.num,c.material_type,c.consumable FROM (
+            SELECT * FROM flow_approval WHERE flow_status = '5' GROUP BY busi_id 
+            ) a INNER JOIN (
+            SELECT * FROM demand_forecast_total where year=?
+            ) b ON a.busi_id = b.busi_id 
+            INNER JOIN materialinfo c ON b.material_code = c.material_code 
+            ) AS subquery GROUP BY material_code,material_name,material_type,consumable;";
+        $result1= Db::query($sql1, [$year]);
+        return json(['data' => $result1, 'total' => count($result1),'code' => 200]);
+      }else{    
+        $sql1 = "SELECT material_code,material_name,material_type,consumable, SUM(num) AS num FROM (
+            SELECT b.material_code,b.material_name, b.num,c.material_type,c.consumable FROM (
+            SELECT * FROM flow_approval WHERE flow_status = '5' GROUP BY busi_id 
+            ) a INNER JOIN (
+            SELECT * FROM demand_forecast_total where year=? and inst_code =?
+            ) b ON a.busi_id = b.busi_id 
+            INNER JOIN materialinfo c ON b.material_code = c.material_code 
+            ) AS subquery GROUP BY material_code,material_name,material_type,consumable;";
+        $result1= Db::query($sql1, [$year, $inst_code]);
+        return json(['data' => $result1, 'total' => count($result1),'code' => 200]);
+      }
    }
 
    
@@ -2957,9 +3093,359 @@ class Index extends BaseController
                 return json(['data' => $result,'code' => 200]);
         }
     }
+
+    //判断时间开关
+    public function judgeDemandTime()
+    {
+        
+        $name= Request::param('name');
+        $result = Db::table('demand_time_control')->where('name', $name)->find();
+        return json(['data' => $result['type'],'code' => 200]);
+    }
+    //开启关不时间开关
+    public function updateDemandTime()
+    {
+        $type = Request::param('type');
+        $name= Request::param('name');
+        try {
+            Db::table('demand_time_control')->where('name', $name)
+            ->update([
+                'type' => $type
+            ]);
+            return json(['message' => '操作成功','code' => 200]);
+        } catch (Exception $e) {
+            // 记录插入错误
+            return json(['message' => '操作失败', 'code' => 300]);
+        }
+    }
+    //导出机构信息
+    public function exportInst()
+    {
+        $searchList = Db::table('inst')->select();
+        if ($searchList == null || count($searchList) === 0) {
+            $data['message'] = 'success';
+            return json(['data' => [], 'code' => 200]);
+        } else {
+            $data['message'] = 'success';
+            return json(['data' => $searchList, 'code' => 200]);
+        }
+    }
+    //导出员工信息
+    public function exportEmp()
+    {
+        $searchList = Db::table('employee')->select();
+        if ($searchList == null || count($searchList) === 0) {
+            $data['message'] = 'success';
+            return json(['data' => [], 'code' => 200]);
+        } else {
+            $data['message'] = 'success';
+            return json(['data' => $searchList, 'code' => 200]);
+        }
+    }
+    //导出客户信息
+    public function exportCust()
+    {
+        $searchList = Db::table('custominfo')->select();
+        if ($searchList == null || count($searchList) === 0) {
+            $data['message'] = 'success';
+            return json(['data' => [], 'code' => 200]);
+        } else {
+            $data['message'] = 'success';
+            return json(['data' => $searchList, 'code' => 200]);
+        }
+    }
     
-     
-     
+    //导入机构
+    public function importInst()
+    {
+        $data = Request::param('data');
+        $userId = Request::param('userId');
+
+        // 开始事务
+        Db::startTrans();
+
+        try {
+            try {
+                DB::table('inst')->where("1=1")->delete();
+            } catch (Exception $e) {
+                Db::rollback();
+                return json(['data' => ['message' => '数据库删除失败'], 'code' => 300]);
+            }
+            foreach ($data as $item) {
+                // 提取每条数据的字段
+                $inst_code = $item['机构编码'];
+                $inst_name = $item['机构名称'];
+                $up_inst_code = $item['上级机构'];
+                $up_inst_name = $item['上级机构名称'];
+                $start_time = $item['创建时间'];
+                $end_time = $item['撤销时间'];
+                try {
+                    Db::table('inst')->insert([
+                        'inst_code' => $inst_code,
+                        'inst_name' => $inst_name,
+                        'up_inst_code' => $up_inst_code,
+                        'up_inst_name' => $up_inst_name,
+                        'start_time' => $start_time,
+                        'end_time' =>  $end_time
+                    ]); 
+                } catch (Exception $e) {
+                    Db::rollback();
+                    return json(['data' => ['message' => '数据库插入失败'], 'code' => 300]);
+                }
+            }
+            try {
+                $sys_record_data = [
+                    'user_id' => $userId,
+                    'type' => '上传机构表',
+                    'time' => date('Y-m-d H:i:s')
+                ];
+                Db::table('sysrecord')->insert($sys_record_data);
+            } catch (Exception $e) {
+                Db::rollback();
+                return json(['data' => ['message' => '数据库记录插入失败'], 'code' => 300]);
+            }
+            // 提交事务
+            Db::commit();
+            return json(['data' => ['message' => '机构导入成功'], 'code' => 200]);
+        } catch (Exception $e) {
+            // 回滚事务
+            Db::rollback();
+            return json(['data' => ['message' => '操作失败: ' . $e->getMessage()], 'code' => 300]);
+        }
+    }
+    //导入员工
+    public function importEmp()
+    {
+        $data = Request::param('data');
+        $userId = Request::param('userId');
+
+        // 开始事务
+        Db::startTrans();
+
+        try {
+            try {
+                DB::table('employee')->where("1=1")->delete();
+            } catch (Exception $e) {
+                Db::rollback();
+                return json(['data' => ['message' => '数据库删除失败'], 'code' => 300]);
+            }
+            foreach ($data as $item) {
+                // 提取每条数据的字段
+                $employee_code = $item['员工编号'];
+                $employee_name = $item['员工姓名'];
+                $type = $item['权限类型（岗位性质）'];
+                $inst_code = $item['所属机构编码'];
+                $inst_name = $item['所属机构名称'];
+                $telephone = $item['联系电话'];
+                $status = $item['员工状态'];
+                $gender = $item['员工性别'];
+                $age = $item['员工年龄'];
+                try {
+                    Db::table('employee')->insert([
+                        'employee_code' => $employee_code,
+                        'employee_name' => $employee_name,
+                        'type' => $type,
+                        'inst_code' => $inst_code,
+                        'inst_name' => $inst_name,
+                        'telephone' =>  $telephone,
+                        'status' =>  $status,
+                        'gender' =>  $gender,
+                        'age' =>  $age
+                    ]); 
+                } catch (Exception $e) {
+                    Db::rollback();
+                    return json(['data' => ['message' => '数据库插入失败'], 'code' => 300]);
+                }
+            }
+            try {
+                $sys_record_data = [
+                    'user_id' => $userId,
+                    'type' => '上传员工表',
+                    'time' => date('Y-m-d H:i:s')
+                ];
+                Db::table('sysrecord')->insert($sys_record_data);
+            } catch (Exception $e) {
+                Db::rollback();
+                return json(['data' => ['message' => '数据库记录插入失败'], 'code' => 300]);
+            }
+            // 提交事务
+            Db::commit();
+            return json(['data' => ['message' => '员工导入成功'], 'code' => 200]);
+        } catch (Exception $e) {
+            // 回滚事务
+            Db::rollback();
+            return json(['data' => ['message' => '操作失败: ' . $e->getMessage()], 'code' => 300]);
+        }
+    }
+    //导入客户信息
+    public function importCust()
+    {
+        $data = Request::param('data');
+        $userId = Request::param('userId');
+
+        // 开始事务
+        Db::startTrans();
+        try {
+            try {
+                DB::table('custominfo')->where("1=1")->delete();
+            } catch (Exception $e) {
+                Db::rollback();
+                return json(['data' => ['message' => '数据库删除失败'], 'code' => 300]);
+            }
+            foreach ($data as $item) {
+                // 提取每条数据的字段
+                $custom_code = $item['客户编码'];
+                $custom_license = $item['许可证号'];
+                $manager_code = $item['客户经理编码'];
+                $custom_name = $item['客户（企业）名称'];
+                $custom_address = $item['客户经营地址'];
+                $longitude = $item['GIS经度'];
+                $latitude = $item['GIS纬度'];
+                $starting_time = $item['开始经营时间'];
+                $ending_time = $item['结束经营时间'];
+                $terminal_level = $item['客户终端层级'];
+                $custom_classification = $item['客户分类（档位）'];
+                $credit_rating = $item['信用等级'];
+                $business_status = $item['经营状态'];
+                $long_term_non_delivery = $item['是否长期不要货'];
+                $operator_name = $item['负责人姓名'];
+                $operator_telephone = $item['经营者联系电话'];
+                $market_type = $item['市场类型（城网、农网）'];
+                $quota_standard = $item['定额标准'];
+                $remain_standard = $item['剩余定额标准'];
+                $region = $item['所属区域'];
+                $whitelist_customer = $item['是否白名单客户（1是0否）'];
+                try {
+                    Db::table('custominfo')->insert([
+                        'custom_code' => $custom_code,
+                        'custom_license' => $custom_license,
+                        'manager_code' => $manager_code,
+                        'custom_name' => $custom_name,
+                        'custom_address' => $custom_address,
+                        'longitude' =>  $longitude,
+                        'latitude' =>  $latitude,
+                        'starting_time' =>  $starting_time,
+                        'ending_time' =>  $ending_time,
+                        'terminal_level' =>  $terminal_level,
+                        'custom_classification' =>  $custom_classification,
+                        'credit_rating' =>  $credit_rating,
+                        'business_status' =>  $business_status,
+                        'long_term_non_delivery' =>  $long_term_non_delivery,
+                        'operator_name' =>  $operator_name,
+                        'operator_telephone' =>  $operator_telephone,
+                        'market_type' =>  $market_type,
+                        'quota_standard' =>  $quota_standard,
+                        'remain_standard' =>  $remain_standard,
+                        'region' =>  $region,
+                        'whitelist_customer' =>  $whitelist_customer
+                    ]); 
+                } catch (Exception $e) {
+                    Db::rollback();
+                    return json(['data' => ['message' => '数据库插入失败'], 'code' => 300]);
+                }
+            }
+            try {
+                $sys_record_data = [
+                    'user_id' => $userId,
+                    'type' => '上传客户表',
+                    'time' => date('Y-m-d H:i:s')
+                ];
+                Db::table('sysrecord')->insert($sys_record_data);
+            } catch (Exception $e) {
+                Db::rollback();
+                return json(['data' => ['message' => '数据库记录插入失败'], 'code' => 300]);
+            }
+            // 提交事务
+            Db::commit();
+            return json(['data' => ['message' => '客户信息导入成功'], 'code' => 200]);
+        } catch (Exception $e) {
+            // 回滚事务
+            Db::rollback();
+            return json(['data' => ['message' => '操作失败: ' . $e->getMessage()], 'code' => 300]);
+        }
+    }
+    
+    //查询机构表
+    public function searchInst()
+    {
+        $instName = Request::param('instName');
+        $page = Request::param('page', 1); 
+        $pageSize = Request::param('pageSize', 10);
+        $searchList = Db::table('inst')
+        ->where('inst_name', 'like', '%' . $instName . '%')->order('inst_code')
+        ->page($page, $pageSize)->select();
+        $total =  Db::table('inst')->where('inst_name', 'like', '%' . $instName . '%')
+        ->count();
+        if ($searchList == null || count($searchList) === 0) {
+            $data['message'] = 'success';
+            return json(['data' => [],'total' => 0, 'code' => 200]);
+        } else {
+            $data['message'] = 'success';
+            return json(['data' => $searchList,'total' => $total, 'code' => 200]);
+        }
+    }
+    //查询员工表
+    public function searchEmp()
+    {
+        $empName = Request::param('empName');
+        $page = Request::param('page', 1); 
+        $pageSize = Request::param('pageSize', 10);
+        $searchList = Db::table('employee')
+        ->where('employee_name', 'like', '%' . $empName . '%')->order('employee_code')
+        ->page($page, $pageSize)->select();
+        $total =  Db::table('employee') ->where('employee_name', 'like', '%' . $empName . '%')
+        ->count();
+        if ($searchList == null || count($searchList) === 0) {
+            $data['message'] = 'success';
+            return json(['data' => [],'total' => 0, 'code' => 200]);
+        } else {
+            $data['message'] = 'success';
+            return json(['data' => $searchList,'total' => $total, 'code' => 200]);
+        }
+    }
+    //查询客户信息表
+    public function searchCust()
+    {
+        $custName = Request::param('custName');
+        $page = Request::param('page', 1); 
+        $pageSize = Request::param('pageSize', 10);
+        $searchList = Db::table('custominfo')
+        ->where('custom_name', 'like', '%' . $custName . '%')->order('custom_code')
+        ->page($page, $pageSize)->select();
+        $total =  Db::table('custominfo') ->where('custom_name', 'like', '%' . $custName . '%')
+        ->count();
+        if ($searchList == null || count($searchList) === 0) {
+            $data['message'] = 'success';
+            return json(['data' => [],'total' => 0, 'code' => 200]);
+        } else {
+            $data['message'] = 'success';
+            return json(['data' => $searchList,'total' => $total, 'code' => 200]);
+        }
+    }
+    
+    //查询延期库存记录
+    public function searchDelayMessage()
+    {
+        $instCode = Request::param('instCode');
+        $creation_time = date('Y-m-d');
+        $new_date = date('Y-m-d', strtotime("+20 days", strtotime($creation_time)));
+        $sql = "select a.*,b.inst_name from (
+        select * from materialinfo where inst_code in (
+        select inst_code from inst where inst_code=? 
+        union all 
+        select inst_code from inst where inst_code in (select inst_code  from inst where up_inst_code=?)
+         union all 
+        select inst_code from inst where inst_code in (select inst_code from inst where up_inst_code in (select inst_code  from inst where up_inst_code=?))) and history_type='0' and end_time <=?
+        ) a left join  inst b on a.inst_code=b.inst_code";
+        $searchList= Db::query($sql, [$instCode,$instCode,$instCode,$new_date]);
+        if ($searchList == null || count($searchList) === 0) {
+            $data['message'] = 'success';
+            return json(['data' => [], 'code' => 200]);
+        } else {
+            $data['message'] = 'success';
+            return json(['data' => $searchList,'code' => 200]);
+        }
+    }
 }
 
 
