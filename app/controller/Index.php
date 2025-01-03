@@ -2470,6 +2470,35 @@ class Index extends BaseController
                                 Db::rollback();
                                 return json(['message' => '该客户剩余定额标准不足', 'code' => 300]);
                             }else{
+                                $busiIdReslut= Db::table('wz_apply')->where('busi_id', $busi_id)->find();
+                                for ($i = 0; $i < (int)$num; $i++) {
+                                    try {
+                                        Db::table('wz_qr_code')->insert([
+                                            'busi_id' =>$busiIdReslut['busi_id'],
+                                            'custom_name' => $busiIdReslut['custom_name'],
+                                            'operator_name' => $busiIdReslut['operator_name'],
+                                            'custom_license' => $busiIdReslut['custom_license'],
+                                            'operator_telephone' => $busiIdReslut['operator_telephone'],
+                                            'custom_address' =>  $busiIdReslut['custom_address'],
+                                            'employee_name' =>  $busiIdReslut['employee_name'],
+                                            'material_code' =>  $busiIdReslut['material_code'],
+                                            'material_name' =>  $busiIdReslut['material_name'],
+                                            'terminal_level' =>  $busiIdReslut['terminal_level'],
+                                            'consumable' =>  $busiIdReslut['consumable'],
+                                            'flow_no' => $busiIdReslut['flow_no'],
+                                            'flow_title' => $busiIdReslut['flow_title'],
+                                            'user_id' => $busiIdReslut['user_id'],
+                                            'user_name' => $busiIdReslut['user_name'],
+                                            'inst_code' => $busiIdReslut['inst_code'],
+                                            'inst_name' => $busiIdReslut['inst_name'],
+                                            'telephone' => $busiIdReslut['telephone'],
+                                            'time' =>  $busiIdReslut['time']
+                                        ]); 
+                                    } catch (Exception $e) {
+                                        Db::rollback();
+                                        return json(['data' => ['message' => '数据库插入失败'], 'code' => 300]);
+                                    }
+                                }
                                 $remainNum=(int)$wzReslut['inventory_quantity']- (int)$num;
                                 $remainStandardNum=(int)$standardReslut['remain_standard']- (int)$wzReslut['material_price'] * (int)$num;
                                 try {
@@ -2499,7 +2528,7 @@ class Index extends BaseController
                                     ]);
                                 } catch (Exception $e) {
                                     Db::rollback();
-                                    return json(['data' => ['message' => '数据库分配记录插入失败'], 'code' => 300]);
+                                    return json(['data' => ['message' => '数据库库存认领记录插入失败'], 'code' => 300]);
                                 }
                             }
                         }
