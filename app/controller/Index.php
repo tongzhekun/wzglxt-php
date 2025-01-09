@@ -1847,6 +1847,52 @@ class Index extends BaseController
             }  catch (Exception $e) {
                 return json(['message' => '查询审批人失败', 'code' => 300]);
             }
+        }else if($flow_no==='6' || $flow_no==='7'){
+            //客户经理发起本机构审批，其他节点审批人为上层机构审批
+            if($flow_node==='1'){
+                $instList = Db::table('inst')->where('inst_code', $inst_code)->find();
+                $up_inst_code =$instList['inst_code'];
+                $up_inst_name =$instList['inst_name'];
+            }else{
+                $instList = Db::table('inst')->where('inst_code', $inst_code)->find();
+                $up_inst_code =$instList['up_inst_code'];
+                $up_inst_name =$instList['up_inst_name'];
+            }
+            try {
+                $roleIdList = Db::table('flow')->where('flow_no', $flow_no)->where('flow_node_pre', $flow_node)->find();
+                $role_id=$roleIdList['role_id'];
+                $result = Db::table('employee')
+                    ->where('inst_code', $up_inst_code)
+                    ->join('user_role', 'employee.employee_code = user_role.user_id', 'inner')
+                    ->where('user_role.role_id', '=', $role_id)
+                    ->select(); 
+                return json(['data' => $result, 'code' => 200]);
+            }  catch (Exception $e) {
+                return json(['message' => '查询审批人失败', 'code' => 300]);
+            }
+        }else if($flow_no==='8' || $flow_no==='9'){
+            //客户经理发起本机构审批，其他节点审批人为上层机构审批
+            if($flow_node==='1'){
+                $instList = Db::table('inst')->where('inst_code', $inst_code)->find();
+                $up_inst_code =$instList['inst_code'];
+                $up_inst_name =$instList['inst_name'];
+            }else{
+                $instList = Db::table('inst')->where('inst_code', $inst_code)->find();
+                $up_inst_code =$instList['up_inst_code'];
+                $up_inst_name =$instList['up_inst_name'];
+            }
+            try {
+                $roleIdList = Db::table('flow')->where('flow_no', $flow_no)->where('flow_node_pre', $flow_node)->find();
+                $role_id=$roleIdList['role_id'];
+                $result = Db::table('employee')
+                    ->where('inst_code', $up_inst_code)
+                    ->join('user_role', 'employee.employee_code = user_role.user_id', 'inner')
+                    ->where('user_role.role_id', '=', $role_id)
+                    ->select(); 
+                return json(['data' => $result, 'code' => 200]);
+            }  catch (Exception $e) {
+                return json(['message' => '查询审批人失败', 'code' => 300]);
+            }
         }
     }
     //查询待办
@@ -1931,6 +1977,22 @@ class Index extends BaseController
                     $row['apply_name'] = $resultList1['user_name'];
                     $row['time'] =$resultList1['time'];
                     $row['url'] ='/materialIssuance/demandForecastTotalApplyApprove';
+                }else if ($row['flow_no'] == '6' || $row['flow_no'] == '7') {
+                    $resultList1 = Db::table('inventory_check_apply')
+                    ->where('busi_id', $busi_id)
+                    ->find();
+                    $row['apply_id'] = $resultList1['user_id'];
+                    $row['apply_name'] = $resultList1['user_name'];
+                    $row['time'] =$resultList1['time'];
+                    $row['url'] ='/materialSupervision/inventoryCheckApprove';
+                }else if ($row['flow_no'] == '8' || $row['flow_no'] == '9') {
+                    $resultList1 = Db::table('qr_code_change_apply')
+                    ->where('busi_id', $busi_id)
+                    ->find();
+                    $row['apply_id'] = $resultList1['user_id'];
+                    $row['apply_name'] = $resultList1['user_name'];
+                    $row['time'] =$resultList1['time'];
+                    $row['url'] ='/materialSupervision/qrCodeApprove';
                 }
                 if (strpos($row['apply_name'], $apply_name) === false) {
                     continue;
@@ -3473,6 +3535,449 @@ class Index extends BaseController
         } else {
             $data['message'] = 'success';
             return json(['data' => $searchList,'code' => 200]);
+        }
+    }
+    //查询客户二维码信息
+    public function searchQrCode()
+    {
+        $custom_license = Request::param('custom_license');
+        $sql = "select * from  wz_qr_code where custom_license=?";
+        $searchList= Db::query($sql, [$custom_license]);
+        if ($searchList == null || count($searchList) === 0) {
+            $data['message'] = 'success';
+            return json(['data' => [], 'code' => 200]);
+        } else {
+            $data['message'] = 'success';
+            return json(['data' => $searchList,'code' => 200]);
+        }
+    }
+    //查询物资盘检记录
+    public function searchInventoryCheckApply()
+    {
+        $busi_id=Request::param('busi_id');
+        try {
+            $resultList = Db::table('inventory_check_apply')
+            ->where('busi_id', $busi_id)
+            ->select();
+            return json(['data' => $resultList, 'code' => 200]);
+        }  catch (Exception $e) {
+            return json(['data' =>[],'message' => '查询客户经理盘检申请失败', 'code' => 300]);
+        }
+    }
+    //提交盘检信息
+    public function submitInventoryCheckApply()
+    {
+        $busi_id= Request::param('busi_id');
+        $flow_no= Request::param('flow_no');
+        $flow_node= Request::param('flow_node');
+        $flow_title= Request::param('flow_title');
+        $approval_content= Request::param('approval_content');
+        $flow_node_name= Request::param('flow_node_name');
+        $approval_name= Request::param('approval_name');
+        $user_id= Request::param('user_id');
+        $material_code_string= Request::param('material_code_string');
+        $material_name_string= Request::param('material_name_string');
+        $qr_code_string= Request::param('qr_code_string');
+        $user_name= Request::param('user_name');
+        $inst_code= Request::param('inst_code');
+        $inst_name= Request::param('inst_name');
+        $telephone= Request::param('telephone');
+        $next_approval_id= Request::param('next_approval_id');
+        $next_approval_name= Request::param('next_approval_name');
+        $custom_name= Request::param('custom_name');
+        $longitude= Request::param('longitude');
+        $is_normal= Request::param('is_normal');
+        $check_date= Request::param('check_date');
+        $material_message= Request::param('material_message');
+        $file_id= Request::param('file_id');
+        $check_longitude= Request::param('check_longitude');
+        $custom_license= Request::param('custom_license');
+        $latitude= Request::param('latitude');
+        $check_latitude= Request::param('check_latitude');
+        $custom_address= Request::param('custom_address');
+        $material_code= Request::param('material_code');
+        $approval_name = Request::param('approval_name');
+        $approval_content = Request::param('approval_content');
+        $time =  date('Y-m-d H:i:s');
+        Db::startTrans();
+        try {
+            //第一步没有busi_id插入，有则第一步退回后更新
+            if(empty($busi_id)){
+                $busi_id = $this->generateBusiId();
+                try {
+                    Db::table('inventory_check_apply')->insert([
+                        'custom_name' =>$custom_name,
+                        'custom_license' => $custom_license,
+                        'longitude' => $longitude,
+                        'latitude' => $latitude,
+                        'material_name_string' => $material_name_string,
+                        'material_code_string' =>  $material_code_string,
+                        'qr_code_string' =>  $qr_code_string,
+                        'check_longitude' =>  $check_longitude,
+                        'check_date' =>  $check_date,
+                        'file_id' =>  $file_id,
+                        'check_latitude' =>  $check_latitude,
+                        'is_normal' =>  $is_normal,
+                        'material_message' => $material_message,
+                        'user_id' => $user_id,
+                        'user_name' => $user_name,
+                        'flow_title' => $flow_title,
+                        'inst_code' => $inst_code ,
+                        'inst_name' => $inst_name ,
+                        'telephone' => $telephone,
+                        'busi_id' => $busi_id,
+                        'flow_no' => $flow_no,
+                        'time' =>  $time,
+                    ]); 
+                } catch (Exception $e) {
+                    Db::rollback();
+                    return json(['message' => '数据库插入失败', 'code' => 300]);
+                }
+            }else{
+                //退回后再提交删除原来数据，新增新的数据
+                if($flow_node==='1'){
+                    DB::table('inventory_check_apply')->where("busi_id",$busi_id)->delete();
+                    try {
+                        Db::table('inventory_check_apply')->insert([
+                            'custom_name' =>$custom_name,
+                            'custom_license' => $custom_license,
+                            'longitude' => $longitude,
+                            'latitude' => $latitude,
+                            'material_name_string' => $material_name_string,
+                            'material_code_string' =>  $material_code_string,
+                            'qr_code_string' =>  $qr_code_string,
+                            'check_longitude' =>  $check_longitude,
+                            'check_date' =>  $check_date,
+                            'file_id' =>  $file_id,
+                            'check_latitude' =>  $check_latitude,
+                            'is_normal' =>  $is_normal,
+                            'material_message' => $material_message,
+                            'user_id' => $user_id,
+                            'user_name' => $user_name,
+                            'flow_title' => $flow_title,
+                            'inst_code' => $inst_code ,
+                            'inst_name' => $inst_name ,
+                            'telephone' => $telephone,
+                            'busi_id' => $busi_id,
+                            'flow_no' => $flow_no,
+                            'time' =>  $time,
+                        ]); 
+                    } catch (Exception $e) {
+                        Db::rollback();
+                        return json(['message' => '数据库插入失败', 'code' => 300]);
+                    }
+                }
+            }
+            try { 
+                //发起插入当前和后一节点，之后审批更新当前节点，后一节点不为-99时插入后一节点
+                $nextFlowNode= Db::table('flow') ->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->find();
+                if($flow_node==='1'){
+                    $currentFlowApproval= Db::table('flow_approval') ->where('busi_id', $busi_id)->where('flow_node',  $flow_node)->find();
+                    if ($currentFlowApproval == null || count($currentFlowApproval) === 0) {
+                        Db::table('flow_approval')->insert([
+                            'busi_id' =>$busi_id,
+                            'flow_no' => $flow_no,
+                            'flow_title' => $flow_title,
+                            'flow_node' => $flow_node,
+                            'flow_node_name' => $flow_node_name,
+                            'approval_id' => $user_id,
+                            'approval_name' => $approval_name,
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time,
+                            'show_type' => '1'
+                        ]); 
+                    } else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_node', $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_time' => $time
+                        ]); 
+                    }
+                }else{
+                    //如果当前节点不是最后一个节点
+                    if($nextFlowNode['flow_node_next'] != '-99'){
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time
+                        ]); 
+                    }else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '5',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time
+                        ]); 
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)
+                        ->update([
+                            'flow_status' => '5'
+                        ]);
+                        
+                    }
+                }       
+                if($nextFlowNode['flow_node_next'] != '-99'){
+                    $flow_node_next = $nextFlowNode['flow_node_next'];
+                    $nextList= Db::table('flow') ->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)->find();
+                    $flow_node_name_next = $nextList['flow_node_name'];
+                    $nextResultList= Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)->select();
+                    if($nextResultList  === null || count($nextResultList) === 0){
+                    }else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)
+                        ->update([
+                            'show_type' => '0'
+                        ]); 
+                    }
+                    Db::table('flow_approval')->insert([
+                        'busi_id' =>$busi_id,
+                        'flow_no' => $flow_no,
+                        'flow_title' => $flow_title,
+                        'flow_node' => $flow_node_next,
+                        'flow_node_name' => $flow_node_name_next,
+                        'approval_id' => $next_approval_id,
+                        'approval_name' => $next_approval_name,
+                        'approve_status' => '1',
+                        'flow_status' => '1',
+                        'approval_content' => '',
+                        'show_type' => '1'
+                    ]); 
+                }
+            } catch (Exception $e) {
+                Db::rollback();
+                return json(['message' => '数据库插入失败', 'code' => 300]);
+            }
+            Db::commit();
+            if($flow_node==='1'){
+                return json(['message' => '流程已提交','busi_id' =>$busi_id,'code' => 200]);
+            }else{
+                return json(['message' => '流程已审批', 'busi_id' =>$busi_id,'code' => 200]);
+            }
+        } catch (Exception $e) {
+            // 回滚事务
+            Db::rollback();
+            return json(['message' => '操作失败', 'code' => 300]);
+        }
+    }
+    //更新物料二维码信息
+    public function updateQrCode()
+    {
+        $id = Request::param('id');
+        $qr_code = Request::param('qr_code');
+        try {
+            Db::table('wz_qr_code')->where('id', $id)
+            ->update([
+                'qr_code' => $qr_code
+            ]);
+            return json(['message' => '更新二维码成功','code' => 200]);
+        } catch (Exception $e) {
+            // 记录插入错误
+            return json(['message' => '更新二维码失败', 'code' => 300]);
+        }
+    }
+    //查询二维码变更申请
+    public function searchQrCodeChangeApply()
+    {
+        $busi_id=Request::param('busi_id');
+        try {
+            $resultList = Db::table('qr_code_change_apply')
+            ->where('busi_id', $busi_id)
+            ->select();
+            return json(['data' => $resultList, 'code' => 200]);
+        }  catch (Exception $e) {
+            return json(['data' =>[],'message' => '查询客户经理二维码变更申请失败', 'code' => 300]);
+        }
+    }
+    //提交二维码变更申请
+    public function submitQrCodeChangeApply()
+    {
+        $busi_id= Request::param('busi_id');
+        $flow_no= Request::param('flow_no');
+        $flow_node= Request::param('flow_node');
+        $flow_title= Request::param('flow_title');
+        $approval_content= Request::param('approval_content');
+        $flow_node_name= Request::param('flow_node_name');
+        $approval_name= Request::param('approval_name');
+        $user_id= Request::param('user_id');
+        $material_code= Request::param('material_code');
+        $material_name= Request::param('material_name');
+        $qr_code= Request::param('qr_code');
+        $qr_id= Request::param('qr_id');
+        $user_name= Request::param('user_name');
+        $inst_code= Request::param('inst_code');
+        $inst_name= Request::param('inst_name');
+        $telephone= Request::param('telephone');
+        $terminal_level= Request::param('terminal_level');
+        $next_approval_id= Request::param('next_approval_id');
+        $next_approval_name= Request::param('next_approval_name');
+        $custom_name= Request::param('custom_name');
+        $material_reason= Request::param('material_reason');
+        $file_id= Request::param('file_id');
+        $custom_license= Request::param('custom_license');
+        $approval_name = Request::param('approval_name');
+        $operator_telephone = Request::param('operator_telephone');
+        $approval_content = Request::param('approval_content');
+        $time =  date('Y-m-d H:i:s');
+        Db::startTrans();
+        try {
+            //第一步没有busi_id插入，有则第一步退回后更新
+            if(empty($busi_id)){
+                $busi_id = $this->generateBusiId();
+                try {
+                    Db::table('qr_code_change_apply')->insert([
+                        'custom_name' =>$custom_name,
+                        'terminal_level' => $terminal_level,
+                        'custom_license' => $custom_license,
+                        'operator_telephone' => $operator_telephone,
+                        'material_name' => $material_name,
+                        'material_code' =>  $material_code,
+                        'qr_code' =>  $qr_code,
+                        'qr_id' =>  $qr_id,
+                        'file_id' =>  $file_id,
+                        'material_reason' => $material_reason,
+                        'user_id' => $user_id,
+                        'user_name' => $user_name,
+                        'flow_title' => $flow_title,
+                        'inst_code' => $inst_code ,
+                        'inst_name' => $inst_name ,
+                        'telephone' => $telephone,
+                        'busi_id' => $busi_id,
+                        'flow_no' => $flow_no,
+                        'time' =>  $time,
+                    ]); 
+                } catch (Exception $e) {
+                    Db::rollback();
+                    return json(['message' => '数据库插入失败', 'code' => 300]);
+                }
+            }else{
+                //退回后再提交删除原来数据，新增新的数据
+                if($flow_node==='1'){
+                    DB::table('qr_code_change_apply')->where("busi_id",$busi_id)->delete();
+                    try {
+                        Db::table('qr_code_change_apply')->insert([
+                            'custom_name' =>$custom_name,
+                            'terminal_level' => $terminal_level,
+                            'operator_telephone' => $operator_telephone,
+                            'custom_license' => $custom_license,
+                            'material_name' => $material_name,
+                            'material_code' =>  $material_code,
+                            'qr_code' =>  $qr_code,
+                            'qr_id' =>  $qr_id,
+                            'file_id' =>  $file_id,
+                            'material_reason' => $material_reason,
+                            'user_id' => $user_id,
+                            'user_name' => $user_name,
+                            'flow_title' => $flow_title,
+                            'inst_code' => $inst_code ,
+                            'inst_name' => $inst_name ,
+                            'telephone' => $telephone,
+                            'busi_id' => $busi_id,
+                            'flow_no' => $flow_no,
+                            'time' =>  $time,
+                        ]); 
+                    } catch (Exception $e) {
+                        Db::rollback();
+                        return json(['message' => '数据库插入失败', 'code' => 300]);
+                    }
+                }
+            }
+            try { 
+                //发起插入当前和后一节点，之后审批更新当前节点，后一节点不为-99时插入后一节点
+                $nextFlowNode= Db::table('flow') ->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->find();
+                if($flow_node==='1'){
+                    $currentFlowApproval= Db::table('flow_approval') ->where('busi_id', $busi_id)->where('flow_node',  $flow_node)->find();
+                    if ($currentFlowApproval == null || count($currentFlowApproval) === 0) {
+                        Db::table('flow_approval')->insert([
+                            'busi_id' =>$busi_id,
+                            'flow_no' => $flow_no,
+                            'flow_title' => $flow_title,
+                            'flow_node' => $flow_node,
+                            'flow_node_name' => $flow_node_name,
+                            'approval_id' => $user_id,
+                            'approval_name' => $approval_name,
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time,
+                            'show_type' => '1'
+                        ]); 
+                    } else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_node', $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_time' => $time
+                        ]); 
+                    }
+                }else{
+                    //如果当前节点不是最后一个节点
+                    if($nextFlowNode['flow_node_next'] != '-99'){
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '1',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time
+                        ]); 
+                    }else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node)->where('show_type',  '1')
+                        ->update([
+                            'approve_status' => '0',
+                            'flow_status' => '5',
+                            'approval_content' => $approval_content,
+                            'approval_time' => $time
+                        ]); 
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)
+                        ->update([
+                            'flow_status' => '5'
+                        ]);
+                        
+                    }
+                }       
+                if($nextFlowNode['flow_node_next'] != '-99'){
+                    $flow_node_next = $nextFlowNode['flow_node_next'];
+                    $nextList= Db::table('flow') ->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)->find();
+                    $flow_node_name_next = $nextList['flow_node_name'];
+                    $nextResultList= Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)->select();
+                    if($nextResultList  === null || count($nextResultList) === 0){
+                    }else{
+                        Db::table('flow_approval')->where('busi_id', $busi_id)->where('flow_no', $flow_no)->where('flow_node',  $flow_node_next)
+                        ->update([
+                            'show_type' => '0'
+                        ]); 
+                    }
+                    Db::table('flow_approval')->insert([
+                        'busi_id' =>$busi_id,
+                        'flow_no' => $flow_no,
+                        'flow_title' => $flow_title,
+                        'flow_node' => $flow_node_next,
+                        'flow_node_name' => $flow_node_name_next,
+                        'approval_id' => $next_approval_id,
+                        'approval_name' => $next_approval_name,
+                        'approve_status' => '1',
+                        'flow_status' => '1',
+                        'approval_content' => '',
+                        'show_type' => '1'
+                    ]); 
+                }
+            } catch (Exception $e) {
+                Db::rollback();
+                return json(['message' => '数据库插入失败', 'code' => 300]);
+            }
+            Db::commit();
+            if($flow_node==='1'){
+                return json(['message' => '流程已提交','busi_id' =>$busi_id,'code' => 200]);
+            }else{
+                return json(['message' => '流程已审批', 'busi_id' =>$busi_id,'code' => 200]);
+            }
+        } catch (Exception $e) {
+            // 回滚事务
+            Db::rollback();
+            return json(['message' => '操作失败', 'code' => 300]);
         }
     }
 }
